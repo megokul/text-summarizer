@@ -1,0 +1,19 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Jupyter and VS Code
+.ipynb_checkpoints/
+.vscode/
+
+# DVC
+.dvc/cache/
+artifacts/
+data/
+
+# Other
+*.log
+*.tmp
