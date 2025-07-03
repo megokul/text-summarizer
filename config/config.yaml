@@ -1,0 +1,29 @@
+
+# Data ingestion configuration
+data_ingestion:
+  raw_data_filename: raw.zip
+  ingested_data_filename: ingested_data.csv
+
+# Data transformation configuration
+data_transformation:
+  train_filename: train.csv
+  val_filename: val.csv
+  test_filename: test.csv
+  preprocessor_filename: preprocessor.joblib
+
+# Model trainer configuration
+model_trainer:
+  inference_model_filename: inference_model
+  trained_model_filename: pegasus-samsum-model
+  training_report_filename: training_report.yaml
+
+model_evaluation:
+  report_filename: evaluation_report.yaml
+
+s3_handler:
+  s3_bucket: textsummarizer-dev-artifacts 
+
+data_backup:
+  s3_enabled: true
+  local_enabled: true
+
