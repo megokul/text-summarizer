@@ -1,5 +1,7 @@
-transformers[sentencepiece]
-datasets
-sacrebleu
-rouge_score
-py7zr
+transformers[sentencepiece]==4.53.0
+sentencepiece==0.2.0
+datasets==3.6.0
+sacrebleu==2.5.1
+rouge_score==0.1.2
+py7zr==0.20.8
+torch==2.7.1
