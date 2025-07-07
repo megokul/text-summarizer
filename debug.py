@@ -1,13 +1,10 @@
-import transformers
-import sentencepiece
-import datasets
-import sacrebleu
-import rouge_score
-import py7zr
+from src.textsummarizer.pipeline.training_pipeline import TrainingPipeline
+from src.textsummarizer.exception.exception import TextSummarizerError
 
-print("transformers:", transformers.__version__)
-print("sentencepiece:", sentencepiece.__version__)
-print("datasets:", datasets.__version__)
-print("sacrebleu:", sacrebleu.__version__)
-print("rouge_score:", rouge_score.__version__)
-print("py7zr:", py7zr.__version__)
+try:
+    pipeline = TrainingPipeline()
+    pipeline.run_pipeline()
+except TextSummarizerError as e:
+    print(f"An error occurred: {e}")
+except Exception as e:
+    print(f"An unexpected error occurred: {e}")

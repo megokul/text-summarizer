@@ -67,7 +67,7 @@ def setup_logger(name: str = "app_logger", level: int = logging.DEBUG) -> loggin
     # flags
     local_enabled = config.data_backup.local_enabled
     s3_enabled = config.data_backup.s3_enabled
-    bucket = config.s3_handler.s3_bucket
+    bucket = config.s3_handler.bucket_name
 
     logger = logging.getLogger(name)
     logger.setLevel(level)

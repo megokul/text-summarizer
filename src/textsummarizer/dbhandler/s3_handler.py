@@ -60,13 +60,16 @@ class S3Handler(DBHandler):
         """Load data from the primary source (not implemented for S3)."""
         raise NotImplementedError("S3Handler does not support load_from_source directly.")
 
-    def upload_file(self, local_path: Path, s3_key: str) -> None:
+    def upload_file(self, local_path: Path, s3_key: str) -> str:
         """
         Upload a single local file to S3.
 
         Args:
             local_path (Path): The path to the local file.
             s3_key (str): The target S3 key.
+        
+        Returns:
+            str: The S3 URI of the uploaded file.
         """
         try:
             if not local_path.is_file():
@@ -77,12 +80,13 @@ class S3Handler(DBHandler):
                 Bucket=self.config.bucket_name,
                 Key=s3_key,
             )
+            s3_uri = f"s3://{self.config.bucket_name}/{s3_key}"
             logger.info(
-                "Uploaded: %s -> s3://%s/%s",
+                "Uploaded: %s -> %s",
                 local_path.as_posix(),
-                self.config.bucket_name,
-                s3_key,
+                s3_uri,
             )
+            return s3_uri
         except ClientError as e:
             logger.info("AWS ClientError during file upload: %s", str(e))
             raise TextSummarizerError(e, logger) from e

@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
+from box import ConfigBox
 
 @dataclass
 class DataIngestionConfig:
@@ -75,3 +76,57 @@ class S3HandlerConfig:
             f"  - Bucket Name:           {self.bucket_name}\n"
             f"  - AWS Region:            {self.aws_region}\n"
         )
+
+
+@dataclass
+class DataTransformationConfig:
+    root_dir: Path
+    tokenizer_name: str
+    max_input_length: int
+    max_target_length: int
+    train_filepath: Path
+    test_filepath: Path
+    val_filepath: Path
+
+    train_size: float
+    val_size: float
+    test_size: float
+    random_state: int
+    stratify: bool
+
+    def __post_init__(self) -> None:
+        self.root_dir = Path(self.root_dir)
+        self.train_filepath = Path(self.train_filepath)
+        self.test_filepath = Path(self.test_filepath)
+        self.val_filepath = Path(self.val_filepath)
+
+    def __repr__(self) -> str:
+        parts = [
+            "\nData Transformation Config:",
+            f"  - Root Dir:              {self.root_dir}",
+            f"  - Tokenizer Name:        {self.tokenizer_name}",
+            f"  - Max Input Length:      {self.max_input_length}",
+            f"  - Max Target Length:     {self.max_target_length}",
+            f"  - Train Filepath:        {self.train_filepath}",
+            f"  - Test Filepath:         {self.test_filepath}",
+            f"  - Val Filepath:          {self.val_filepath}",
+            f"  - Train Size:            {self.train_size}",
+            f"  - Val Size:              {self.val_size}",
+            f"  - Test Size:             {self.test_size}",
+            f"  - Random State:          {self.random_state}",
+            f"  - Stratify:              {self.stratify}",
+        ]
+        return "\n".join(parts)
+
+
+@dataclass
+class ModelTrainerConfig:
+    root_dir: Path
+    model_path: Path
+    report_path: Path
+    inference_model_path: Path
+
+@dataclass
+class ModelEvaluationConfig:
+    root_dir: Path
+    report_path: Path

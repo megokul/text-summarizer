@@ -11,14 +11,17 @@ from src.textsummarizer.constants.constants import (
     INGEST_RAW_SUBDIR,
     INGEST_ROOT,
     PARAMS_FILENAME,
+    TRANSFORM_ROOT,
 )
 from src.textsummarizer.entity.config_entity import (
     DataIngestionConfig,
+    DataTransformationConfig,
     S3HandlerConfig,
 )
 from src.textsummarizer.utils.core import read_yaml
 from src.textsummarizer.utils.timestamp import get_utc_timestamp
 from src.textsummarizer.logging import logger
+from src.textsummarizer.exception.exception import TextSummarizerError
 
 
 class ConfigurationManager:
@@ -124,3 +127,36 @@ class ConfigurationManager:
         )
         logger.info(f"S3 handler configuration created: {s3_handler_config}")
         return s3_handler_config
+
+    def get_data_transformation_config(self) -> DataTransformationConfig:
+        try:
+            config = self.config.data_transformation
+            params = self.params.data_transformation
+            root_dir = self.artifacts_root / TRANSFORM_ROOT
+            train_filepath = root_dir / config.train_filename
+            val_filepath = root_dir / config.val_filename
+            test_filepath = root_dir / config.test_filename
+
+            data_transformation_config = DataTransformationConfig(
+                root_dir=root_dir,
+                train_filepath=train_filepath,
+                val_filepath=val_filepath,
+                test_filepath=test_filepath,
+
+                # Tokenizer settings
+                tokenizer_name=params.tokenizer.pretrained_model_name,
+                max_input_length=params.tokenizer.max_input_length,
+                max_target_length=params.tokenizer.max_target_length,
+
+                # Data split settings
+                train_size=params.data_split.train_size,
+                val_size=params.data_split.val_size,
+                test_size=params.data_split.test_size,
+                random_state=params.data_split.random_state,
+                stratify=params.data_split.stratify,
+            )
+
+            return data_transformation_config
+
+        except Exception as e:
+            raise TextSummarizerError(e, logger) from e

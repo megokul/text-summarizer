@@ -1,4 +1,6 @@
 import pandas as pd
+import requests
+from time import sleep
 from pathlib import Path
 from box import ConfigBox
 from box.exceptions import BoxValueError, BoxTypeError, BoxKeyError
@@ -267,3 +269,40 @@ def load_object(path: Path, label: str):
         # Log and raise error on failure
         logger.info(f"Failed to load {label} from: '{path.as_posix()}'")
         raise TextSummarizerError(e, logger) from e
+
+
+def download_file(url: str, raw_filepath: Path, retries: int = 3, delay: float = 2.0) -> None:
+    """
+    Downloads dataset from configured URL with retries.
+    Converts GitHub blob URLs to raw content.
+    """
+    if "github.com" in url and "/blob/" in url:
+        url = url.replace("/blob/", "/raw/")
+        logger.info(f"Converted GitHub blob URL to raw URL: {url}")
+
+    if raw_filepath.exists():
+        logger.info(f"Dataset already exists at: {raw_filepath}. Skipping download.")
+        return
+
+    raw_filepath.parent.mkdir(parents=True, exist_ok=True)
+
+    for attempt in range(1, retries + 1):
+        try:
+            logger.info(f"Attempting to download dataset (Attempt {attempt}/{retries})...")
+            response = requests.get(url, stream=True)
+            response.raise_for_status()
+
+            with open(raw_filepath, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+
+            logger.info(f"Download successful. File saved to: {raw_filepath}")
+            return
+
+        except Exception as e:
+            logger.warning(f"Download attempt {attempt} failed: {e}")
+            if attempt < retries:
+                sleep(delay)
+            else:
+                logger.error("Error during dataset download after retries.")
+                raise TextSummarizerError(e, logger) from e

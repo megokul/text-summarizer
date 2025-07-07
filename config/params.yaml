@@ -1,5 +1,5 @@
 # Parameters for data transformation
-transformation_params:
+data_transformation:
   data_split:
     train_size: 0.8
     val_size: 0.1
