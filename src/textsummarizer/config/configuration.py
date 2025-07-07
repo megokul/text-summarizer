@@ -136,6 +136,7 @@ class ConfigurationManager:
             train_filepath = root_dir / config.train_filename
             val_filepath = root_dir / config.val_filename
             test_filepath = root_dir / config.test_filename
+            data_backup_config = self.config.data_backup
 
             data_transformation_config = DataTransformationConfig(
                 root_dir=root_dir,
@@ -154,6 +155,9 @@ class ConfigurationManager:
                 test_size=params.data_split.test_size,
                 random_state=params.data_split.random_state,
                 stratify=params.data_split.stratify,
+
+                local_enabled=data_backup_config.local_enabled,
+                s3_enabled=data_backup_config.s3_enabled,
             )
 
             return data_transformation_config

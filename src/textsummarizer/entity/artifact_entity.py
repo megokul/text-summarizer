@@ -30,6 +30,31 @@ class DataIngestionArtifact:
         )
 
 
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+
+
 @dataclass(frozen=True)
 class DataTransformationArtifact:
-    transformed_data_path: str
+    train_filepath: Optional[Path] = None
+    val_filepath: Optional[Path] = None
+    test_filepath: Optional[Path] = None
+
+    train_s3_uri: Optional[str] = None
+    val_s3_uri: Optional[str] = None
+    test_s3_uri: Optional[str] = None
+
+    def __repr__(self) -> str:
+        def fmt(p): return p.as_posix() if isinstance(p, Path) else "None"
+        def fmt_uri(u): return u if u else "None"
+
+        return (
+            "\nData Transformation Artifact:\n"
+            f"  - Train Filepath:        '{fmt(self.train_filepath)}'\n"
+            f"  - Val Filepath:          '{fmt(self.val_filepath)}'\n"
+            f"  - Test Filepath:         '{fmt(self.test_filepath)}'\n"
+            f"  - Train S3 URI:          '{fmt_uri(self.train_s3_uri)}'\n"
+            f"  - Val S3 URI:            '{fmt_uri(self.val_s3_uri)}'\n"
+            f"  - Test S3 URI:           '{fmt_uri(self.test_s3_uri)}'\n"
+        )

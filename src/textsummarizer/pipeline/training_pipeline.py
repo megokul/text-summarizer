@@ -46,6 +46,7 @@ class TrainingPipeline:
                 data_transformation = DataTransformation(
                     transformation_config=data_transformation_config,
                     ingestion_artifact=data_ingestion_artifact,
+                    backup_handler=s3_handler,
                 )
                 data_transformation_artifact = data_transformation.run_transformation()
                 logger.info(f"Data Transformation Artifact: {data_transformation_artifact}")
