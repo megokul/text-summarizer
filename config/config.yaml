@@ -14,6 +14,8 @@ data_transformation:
 
 # Model trainer configuration
 model_trainer:
+  root_dir: model_trainer
+  model_ckpt: google/pegasus-cnn_dailymail
   inference_model_filename: inference_model
   trained_model_filename: pegasus-samsum-model
   training_report_filename: training_report.yaml
@@ -27,4 +29,3 @@ s3_handler:
 data_backup:
   s3_enabled: true
   local_enabled: true
-

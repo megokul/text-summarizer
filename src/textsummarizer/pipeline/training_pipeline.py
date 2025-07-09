@@ -5,7 +5,7 @@ from src.textsummarizer.logging import logger
 
 from src.textsummarizer.components.data_ingestion import DataIngestion
 from src.textsummarizer.components.data_transformation import DataTransformation
-# from src.textsummarizer.components.model_trainer import ModelTrainer
+from src.textsummarizer.components.model_trainer import ModelTrainer
 # from src.textsummarizer.components.model_evaluation import ModelEvaluation
 
 
@@ -54,14 +54,10 @@ class TrainingPipeline:
                 logger.warning("Data validation failed. Skipping subsequent steps.")
                 return
 
-            # # Step 5: Run model training
-            # model_trainer_config = self.config_manager.get_model_trainer_config()
-            # model_trainer = ModelTrainer(
-            #     trainer_config=model_trainer_config,
-            #     transformation_artifact=data_transformation_artifact,
-            # )
-            # model_trainer_artifact = model_trainer.run_training()
-            # logger.info(f"Model Trainer Artifact: {model_trainer_artifact}")
+            # Step 5: Run model training
+            model_trainer_config = self.config_manager.get_model_trainer_config()
+            model_trainer = ModelTrainer(config=model_trainer_config)
+            model_trainer.train()
 
             # # Step 6: Run model evaluation
             # model_evaluation_config = self.config_manager.get_model_evaluation_config()

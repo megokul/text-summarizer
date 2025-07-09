@@ -16,6 +16,7 @@ from src.textsummarizer.constants.constants import (
 from src.textsummarizer.entity.config_entity import (
     DataIngestionConfig,
     DataTransformationConfig,
+    ModelTrainerConfig,
     S3HandlerConfig,
 )
 from src.textsummarizer.utils.core import read_yaml
@@ -164,3 +165,25 @@ class ConfigurationManager:
 
         except Exception as e:
             raise TextSummarizerError(e, logger) from e
+
+    def get_model_trainer_config(self) -> ModelTrainerConfig:
+        config = self.config.model_trainer
+        params = self.params.model_trainer.training_arguments
+        root_dir = self.artifacts_root / "model_trainer"
+
+        model_trainer_config = ModelTrainerConfig(
+            root_dir=root_dir,
+            data_path=self.artifacts_root / "data_transformation" / "samsum_dataset",
+            model_ckpt = config.model_ckpt,
+            num_train_epochs = params.num_train_epochs,
+            warmup_steps = params.warmup_steps,
+            per_device_train_batch_size = params.per_device_train_batch_size,
+            weight_decay = params.weight_decay,
+            logging_steps = params.logging_steps,
+            evaluation_strategy = params.evaluation_strategy,
+            eval_steps = params.eval_steps,
+            save_steps = params.save_steps,
+            gradient_accumulation_steps = params.gradient_accumulation_steps,
+        )
+
+        return model_trainer_config

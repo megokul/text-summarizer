@@ -148,9 +148,17 @@ class DataTransformationConfig:
 @dataclass
 class ModelTrainerConfig:
     root_dir: Path
-    model_path: Path
-    report_path: Path
-    inference_model_path: Path
+    data_path: Path
+    model_ckpt: str
+    num_train_epochs: int
+    warmup_steps: int
+    per_device_train_batch_size: int
+    weight_decay: float
+    logging_steps: int
+    evaluation_strategy: str
+    eval_steps: int
+    save_steps: float
+    gradient_accumulation_steps: int
 
 @dataclass
 class ModelEvaluationConfig:
