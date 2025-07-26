@@ -67,10 +67,7 @@ TEST_LABEL = "test"
 # ==============================================================================
 # Directories for data transformation artifacts
 TRANSFORM_ROOT = "data_transformation"
-TRANSFORM_TRAIN_SUBDIR = "train"
-TRANSFORM_TEST_SUBDIR = "test"
-TRANSFORM_VAL_SUBDIR = "val"
-TRANSFORM_PROCESSOR_SUBDIR = "data_processor"
+TRANSFORM_TOKENIZED_SUBDIR = "tokenized_data"
 
 
 # ==============================================================================

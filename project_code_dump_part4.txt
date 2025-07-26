@@ -1,0 +1,297 @@
+--- CODE DUMP | PART 4 of 5 ---
+
+
+================================================================================
+# PY FILE: src\textsummarizer\inference\__init__.py
+================================================================================
+
+
+
+================================================================================
+# PY FILE: src\textsummarizer\inference\estimator.py
+================================================================================
+
+
+
+================================================================================
+# PY FILE: src\textsummarizer\logging\__init__.py
+================================================================================
+
+"""
+Centralized logger for the textsummarizer project.
+
+Provides a reusable `logger` instance configured with:
+- UTC timestamped log directory and file
+- File + stream handlers
+- DEBUG level logging by default
+"""
+
+import logging
+from .app_logger import setup_logger
+
+# Static logger name and level
+LOGGER_NAME = "textsummarizer_logger"
+LOG_LEVEL = logging.DEBUG
+
+# Initialize logger once and share across the project
+logger = setup_logger(name=LOGGER_NAME, level=LOG_LEVEL)
+
+================================================================================
+# PY FILE: src\textsummarizer\logging\app_logger.py
+================================================================================
+
+"""
+This module provides a centralized logger setup for the application,
+supporting console, local file, and AWS S3 logging handlers.
+"""
+import logging
+import sys
+from io import BytesIO
+from pathlib import Path
+
+import boto3
+from box import ConfigBox
+from yaml import safe_load
+
+from src.textsummarizer.constants.constants import (
+    CONFIG_ROOT,
+    CONFIG_FILENAME,
+    LOGS_ROOT,
+)
+from src.textsummarizer.utils.timestamp import get_utc_timestamp
+from src.textsummarizer.exception.exception import TextSummarizerError
+
+
+class LogHandler(logging.Handler):
+    """
+    A custom logging handler that streams log records to an AWS S3 bucket.
+
+    This handler buffers log lines in memory and uploads the complete buffer
+    to a specified S3 object each time a log record is emitted. This ensures
+    the log file in S3 is always up-to-date.
+    """
+
+    def __init__(self, bucket: str, key: str, level: int = logging.NOTSET) -> None:
+        """
+        Initializes the S3 LogHandler.
+
+        Args:
+            bucket (str): The name of the S3 bucket.
+            key (str): The S3 object key (path) for the log file.
+            level (int, optional): The logging level. Defaults to logging.NOTSET.
+        """
+        super().__init__(level)
+        self.bucket = bucket
+        self.key = key
+        self.buffer = BytesIO()
+        self.s3 = boto3.client("s3")
+        self.setFormatter(
+            logging.Formatter("[%(asctime)s] - %(levelname)s - %(module)s - %(message)s")
+        )
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """
+        Formats a log record and uploads the buffer to S3.
+
+        Args:
+            record (logging.LogRecord): The log record to process.
+        """
+        try:
+            # Format the log record and append it to the in-memory buffer
+            line = self.format(record) + "\n"
+            self.buffer.write(line.encode("utf-8"))
+            # Rewind to the beginning of the buffer before uploading
+            self.buffer.seek(0)
+            self.s3.put_object(
+                Bucket=self.bucket, Key=self.key, Body=self.buffer.getvalue()
+            )
+            # Move the buffer pointer to the end for the next write operation
+            self.buffer.seek(0, 2)
+        except Exception:
+            self.handleError(record)
+
+
+def setup_logger(
+    name: str = "app_logger", level: int = logging.DEBUG
+) -> logging.Logger:
+    """
+    Configures and returns a logger with multiple handlers.
+
+    This function sets up a logger that can write to the console, a local file,
+    and an S3 bucket, based on the project's configuration settings.
+
+    Args:
+        name (str, optional): The name of the logger. Defaults to "app_logger".
+        level (int, optional): The logging level. Defaults to logging.DEBUG.
+
+    Raises:
+        TextSummarizerError: If logger setup fails.
+
+    Returns:
+        logging.Logger: The configured logger instance.
+    """
+    try:
+        # Ensure console output is UTF-8 compliant
+        sys.stdout.reconfigure(encoding="utf-8")
+        timestamp = get_utc_timestamp()
+
+        # Load configuration from the YAML file
+        config_path = Path(CONFIG_ROOT) / CONFIG_FILENAME
+        with config_path.open("r", encoding="utf-8") as file:
+            config = ConfigBox(safe_load(file))
+
+        # Get flags and settings from the configuration
+        local_enabled = config.data_backup.local_enabled
+        s3_enabled = config.data_backup.s3_enabled
+        bucket = config.s3_handler.bucket_name
+
+        logger = logging.getLogger(name)
+        logger.setLevel(level)
+
+        # 1) Configure console handler (always enabled)
+        if not any(
+            isinstance(h, logging.StreamHandler) and h.stream is sys.stdout
+            for h in logger.handlers
+        ):
+            ch = logging.StreamHandler(sys.stdout)
+            ch.setLevel(level)
+            ch.setFormatter(
+                logging.Formatter(
+                    "[%(asctime)s] - %(levelname)s - %(module)s - %(message)s"
+                )
+            )
+            logger.addHandler(ch)
+
+        # 2) Configure local file handler (if enabled)
+        if local_enabled:
+            log_dir = Path(LOGS_ROOT) / timestamp
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_filepath = log_dir / f"{timestamp}.log"
+
+            if not any(
+                isinstance(h, logging.FileHandler)
+                and h.baseFilename == str(log_filepath)
+                for h in logger.handlers
+            ):
+                fh = logging.FileHandler(log_filepath, encoding="utf-8")
+                fh.setLevel(level)
+                fh.setFormatter(
+                    logging.Formatter(
+                        "[%(asctime)s] - %(levelname)s - %(module)s - %(message)s"
+                    )
+                )
+                logger.addHandler(fh)
+
+        # 3) Configure S3 handler (if enabled)
+        if s3_enabled and bucket:
+            log_s3_key = f"{LOGS_ROOT}/{timestamp}/{timestamp}.log"
+            if not any(isinstance(h, LogHandler) for h in logger.handlers):
+                s3h = LogHandler(bucket=bucket, key=log_s3_key, level=level)
+                logger.addHandler(s3h)
+
+        return logger
+    except Exception as e:
+        # Use a basic logger for this specific error, as the main one failed
+        temp_logger = logging.getLogger("setup_error_logger")
+        temp_logger.info("Error during logger setup.")
+        raise TextSummarizerError(e, temp_logger) from e
+
+================================================================================
+# PY FILE: src\textsummarizer\pipeline\__init__.py
+================================================================================
+
+
+
+================================================================================
+# PY FILE: src\textsummarizer\pipeline\prediction_pipeline.py
+================================================================================
+
+
+
+================================================================================
+# PY FILE: src\textsummarizer\pipeline\training_pipeline.py
+================================================================================
+
+from src.textsummarizer.config.configuration import ConfigurationManager
+from src.textsummarizer.exception.exception import TextSummarizerError
+from src.textsummarizer.dbhandler.s3_handler import S3Handler
+from src.textsummarizer.logging import logger
+
+from src.textsummarizer.components.data_ingestion import DataIngestion
+from src.textsummarizer.components.data_transformation import DataTransformation
+from src.textsummarizer.components.model_trainer import ModelTrainer
+# from src.textsummarizer.components.model_evaluation import ModelEvaluation
+
+
+class TrainingPipeline:
+    """
+    Orchestrates the entire model training process.
+    """
+    def __init__(self):
+        try:
+            logger.info("Initializing TrainingPipeline...")
+            self.config_manager = ConfigurationManager()
+        except Exception as e:
+            raise TextSummarizerError(e, "Failed to initialize TrainingPipeline.") from e
+
+    def run_pipeline(self):
+        """
+        Executes the full training pipeline from data ingestion to evaluation.
+        """
+        try:
+            logger.info("========== Training Pipeline Started ==========")
+
+            # Step 1: Setup configurations
+            s3_config = self.config_manager.get_s3_handler_config()
+
+            # Step 2: Run data ingestion with its own S3 handler
+            data_ingestion_config = self.config_manager.get_data_ingestion_config()
+            data_ingestion = DataIngestion(
+                config=data_ingestion_config,
+                backup_handler=S3Handler(config=s3_config),
+            )
+            data_ingestion_artifact = data_ingestion.run_ingestion()
+            logger.info(f"Data Ingestion Artifact: {data_ingestion_artifact}")
+
+            # Step 3: Run data transformation with its own S3 handler
+            if data_ingestion_artifact:
+                data_transformation_config = self.config_manager.get_data_transformation_config()
+                data_transformation = DataTransformation(
+                    config=data_transformation_config,
+                    artifact=data_ingestion_artifact,
+                    backup_handler=S3Handler(config=s3_config),
+                )
+                data_transformation_artifact = data_transformation.run_transformation()
+                logger.info(f"Data Transformation Artifact: {data_transformation_artifact}")
+            else:
+                logger.warning("Data Transformation failed. Skipping subsequent steps.")
+                return
+
+            # Step 5: Run model training
+            model_trainer_config = self.config_manager.get_model_trainer_config()
+            model_trainer = ModelTrainer(
+                config=model_trainer_config,
+                artifact=data_transformation_artifact,
+                )
+            model_trainer_artifact = model_trainer.train()
+
+            # # Step 6: Run model evaluation
+            # model_evaluation_config = self.config_manager.get_model_evaluation_config()
+            # model_evaluation = ModelEvaluation(
+            #     evaluation_config=model_evaluation_config,
+            #     trainer_artifact=model_trainer_artifact,
+            #     transformation_artifact=data_transformation_artifact
+            # )
+            # model_evaluation_artifact = model_evaluation.run_evaluation()
+            # logger.info(f"Model Evaluation Artifact: {model_evaluation_artifact}")
+
+            logger.info("========== Training Pipeline Completed ==========")
+
+        except Exception as e:
+            raise TextSummarizerError(e, "TrainingPipeline failed.") from e
+
+================================================================================
+# PY FILE: src\textsummarizer\utils\__init__.py
+================================================================================
+
+

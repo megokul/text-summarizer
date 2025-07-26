@@ -34,7 +34,7 @@ class TrainingPipeline:
             # Step 2: Run data ingestion
             data_ingestion_config = self.config_manager.get_data_ingestion_config()
             data_ingestion = DataIngestion(
-                ingestion_config=data_ingestion_config,
+                config=data_ingestion_config,
                 backup_handler=s3_handler,
             )
             data_ingestion_artifact = data_ingestion.run_ingestion()
@@ -44,8 +44,8 @@ class TrainingPipeline:
             if data_ingestion_artifact:
                 data_transformation_config = self.config_manager.get_data_transformation_config()
                 data_transformation = DataTransformation(
-                    transformation_config=data_transformation_config,
-                    ingestion_artifact=data_ingestion_artifact,
+                    config=data_transformation_config,
+                    artifact=data_ingestion_artifact,
                     backup_handler=s3_handler,
                 )
                 data_transformation_artifact = data_transformation.run_transformation()
@@ -56,7 +56,9 @@ class TrainingPipeline:
 
             # Step 5: Run model training
             model_trainer_config = self.config_manager.get_model_trainer_config()
-            model_trainer = ModelTrainer(config=model_trainer_config)
+            model_trainer = ModelTrainer(config=model_trainer_config,
+                                         artifact=data_transformation_artifact,
+                                         backup_handler=s3_handler)
             model_trainer.train()
 
             # # Step 6: Run model evaluation

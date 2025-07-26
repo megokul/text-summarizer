@@ -12,6 +12,8 @@ from src.textsummarizer.constants.constants import (
     INGEST_ROOT,
     PARAMS_FILENAME,
     TRANSFORM_ROOT,
+    TRANSFORM_TOKENIZED_SUBDIR,
+    TRAINER_ROOT,
 )
 from src.textsummarizer.entity.config_entity import (
     DataIngestionConfig,
@@ -92,8 +94,8 @@ class ConfigurationManager:
         root_dir = self.artifacts_root / INGEST_ROOT
         raw_filepath = root_dir / INGEST_RAW_SUBDIR / ingestion_config.raw_data_filename
         dvc_raw_filepath = Path(DVC_ROOT) / DVC_RAW_SUBDIR / ingestion_config.raw_data_filename
-        ingested_filepath = root_dir / INGEST_INGESTED_SUBDIR / ingestion_config.ingested_data_filename
-        dvc_ingested_filepath = Path(DVC_ROOT) / INGEST_INGESTED_SUBDIR / ingestion_config.ingested_data_filename
+        ingested_dir = root_dir / INGEST_INGESTED_SUBDIR 
+        dvc_ingested_dir = Path(DVC_ROOT) / INGEST_INGESTED_SUBDIR
 
         # Create the configuration object
         data_ingestion_config = DataIngestionConfig(
@@ -101,10 +103,11 @@ class ConfigurationManager:
             source_url=ingestion_config.source_URL,
             raw_filepath=raw_filepath,
             dvc_raw_filepath=dvc_raw_filepath,
-            ingested_filepath=ingested_filepath,
-            dvc_ingested_filepath=dvc_ingested_filepath,
+            ingested_dir=ingested_dir,
+            dvc_ingested_dir=dvc_ingested_dir,
             local_enabled=data_backup_config.local_enabled,
             s3_enabled=data_backup_config.s3_enabled,
+            dataset_name=ingestion_config.dataset_name,
         )
         logger.info(f"Data ingestion configuration created: {data_ingestion_config}")
         return data_ingestion_config
@@ -131,31 +134,22 @@ class ConfigurationManager:
 
     def get_data_transformation_config(self) -> DataTransformationConfig:
         try:
-            config = self.config.data_transformation
             params = self.params.data_transformation
             root_dir = self.artifacts_root / TRANSFORM_ROOT
-            train_filepath = root_dir / config.train_filename
-            val_filepath = root_dir / config.val_filename
-            test_filepath = root_dir / config.test_filename
+            tokenized_dataset_dir=root_dir / TRANSFORM_TOKENIZED_SUBDIR
+            dvc_tokenized_dataset_dir=Path(DVC_ROOT) / TRANSFORM_TOKENIZED_SUBDIR
             data_backup_config = self.config.data_backup
 
             data_transformation_config = DataTransformationConfig(
                 root_dir=root_dir,
-                train_filepath=train_filepath,
-                val_filepath=val_filepath,
-                test_filepath=test_filepath,
+                tokenized_dataset_dir=tokenized_dataset_dir,
+                dvc_tokenized_dataset_dir=dvc_tokenized_dataset_dir,
+                
 
                 # Tokenizer settings
                 tokenizer_name=params.tokenizer.pretrained_model_name,
                 max_input_length=params.tokenizer.max_input_length,
                 max_target_length=params.tokenizer.max_target_length,
-
-                # Data split settings
-                train_size=params.data_split.train_size,
-                val_size=params.data_split.val_size,
-                test_size=params.data_split.test_size,
-                random_state=params.data_split.random_state,
-                stratify=params.data_split.stratify,
 
                 local_enabled=data_backup_config.local_enabled,
                 s3_enabled=data_backup_config.s3_enabled,
@@ -169,7 +163,8 @@ class ConfigurationManager:
     def get_model_trainer_config(self) -> ModelTrainerConfig:
         config = self.config.model_trainer
         params = self.params.model_trainer.training_arguments
-        root_dir = self.artifacts_root / "model_trainer"
+        root_dir = self.artifacts_root / TRAINER_ROOT
+        data_backup_config = self.config.data_backup
 
         model_trainer_config = ModelTrainerConfig(
             root_dir=root_dir,
@@ -178,12 +173,16 @@ class ConfigurationManager:
             num_train_epochs = params.num_train_epochs,
             warmup_steps = params.warmup_steps,
             per_device_train_batch_size = params.per_device_train_batch_size,
+            per_device_eval_batch_size = params.per_device_eval_batch_size,
             weight_decay = params.weight_decay,
             logging_steps = params.logging_steps,
-            evaluation_strategy = params.evaluation_strategy,
+            learning_rate= params.learning_rate,
+            eval_strategy = params.eval_strategy,
             eval_steps = params.eval_steps,
             save_steps = params.save_steps,
             gradient_accumulation_steps = params.gradient_accumulation_steps,
+            local_enabled=data_backup_config.local_enabled,
+            s3_enabled=data_backup_config.s3_enabled,
         )
 
         return model_trainer_config

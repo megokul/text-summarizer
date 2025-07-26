@@ -17,3 +17,4 @@ dagshub==0.5.10
 flask==3.1.1
 gunicorn==23.0.0
 huggingface_hub[hf_xet]
+s3fs==2025.7.0

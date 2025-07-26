@@ -1,12 +1,5 @@
 # Parameters for data transformation
 data_transformation:
-  data_split:
-    train_size: 0.8
-    val_size: 0.1
-    test_size: 0.1
-    random_state: 42
-    stratify: false
-
   tokenizer:
     pretrained_model_name: google/pegasus-cnn_dailymail
     max_input_length: 1024
@@ -21,7 +14,7 @@ model_trainer:
     per_device_eval_batch_size: 2
     weight_decay: 0.01
     logging_steps: 10
-    evaluation_strategy: steps
+    eval_strategy: steps
     eval_steps: 500
     save_steps: 5000
     gradient_accumulation_steps: 8

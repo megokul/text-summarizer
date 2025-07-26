@@ -1,3 +1,10 @@
+--- CODE DUMP | PART 5 of 5 ---
+
+
+================================================================================
+# PY FILE: src\textsummarizer\utils\core.py
+================================================================================
+
 import pandas as pd
 import requests
 from time import sleep
@@ -271,38 +278,180 @@ def load_object(path: Path, label: str):
         raise TextSummarizerError(e, logger) from e
 
 
+from pathlib import Path
+from time import sleep
+import requests
+
 def download_file(url: str, download_path: Path, retries: int = 3, delay: float = 2.0) -> None:
     """
-    Downloads dataset from configured URL with retries.
-    Converts GitHub blob URLs to raw content.
+    Download a file from a URL to the specified path, with automatic GitHub blob-to-raw
+    conversion, retries, and robust error logging.
+
+    Args:
+        url (str): Source URL for the file to download.
+        download_path (Path): Local path to save the downloaded file.
+        retries (int, optional): Number of download attempts before failing. Defaults to 3.
+        delay (float, optional): Delay in seconds between retry attempts. Defaults to 2.0.
+
+    Raises:
+        TextSummarizerError: Raised if the download fails after all retries.
     """
-    if "github.com" in url and "/blob/" in url:
-        url = url.replace("/blob/", "/raw/")
-        logger.info(f"Converted GitHub blob URL to raw URL: {url}")
+    try:
+        # Convert GitHub blob URLs to raw for direct download
+        if "github.com" in url and "/blob/" in url:
+            url = url.replace("/blob/", "/raw/")
+            logger.info(f"Converted GitHub blob URL to raw URL: {url}")
 
-    if download_path.exists():
-        logger.info(f"Dataset already exists at: {download_path}. Skipping download.")
-        return
-
-    download_path.parent.mkdir(parents=True, exist_ok=True)
-
-    for attempt in range(1, retries + 1):
-        try:
-            logger.info(f"Attempting to download dataset (Attempt {attempt}/{retries})...")
-            response = requests.get(url, stream=True)
-            response.raise_for_status()
-
-            with open(download_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-
-            logger.info(f"Download successful. File saved to: {download_path}")
+        # Skip download if file already exists
+        if download_path.exists():
+            logger.info(f"File already exists at {download_path}. Skipping download.")
             return
 
-        except Exception as e:
-            logger.warning(f"Download attempt {attempt} failed: {e}")
-            if attempt < retries:
-                sleep(delay)
-            else:
-                logger.error("Error during dataset download after retries.")
-                raise TextSummarizerError(e, logger) from e
+        # Ensure parent directory exists
+        download_path.parent.mkdir(parents=True, exist_ok=True)
+
+        for attempt in range(1, retries + 1):
+            try:
+                logger.info(f"Starting download attempt {attempt}/{retries}: {url}")
+                response = requests.get(url, stream=True, timeout=60)
+                response.raise_for_status()
+
+                with open(download_path, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+
+                logger.info(f"Download successful: {download_path}")
+                return
+
+            except Exception as e:
+                logger.warning(f"Download attempt {attempt} failed: {e}")
+                if attempt < retries:
+                    logger.info(f"Retrying after {delay} seconds...")
+                    sleep(delay)
+                else:
+                    logger.error(f"Failed to download file after {retries} attempts: {url}")
+                    raise TextSummarizerError(e, logger) from e
+
+    except Exception as outer_e:
+        logger.error(f"Error during file download: {outer_e}")
+        raise  # Already wrapped in TextSummarizerError above
+
+================================================================================
+# PY FILE: src\textsummarizer\utils\timestamp.py
+================================================================================
+
+from datetime import datetime, timezone
+
+# Global cache for the timestamp to ensure it's generated only once per run
+_timestamp_cache: str | None = None
+
+def get_utc_timestamp() -> str:
+    """
+    Generates and caches a UTC timestamp string.
+
+    The timestamp is created upon the first call and then reused for all
+    subsequent calls within the same application run. This ensures consistency
+    across logs and artifacts.
+
+    Returns:
+        str: A timestamp in the format 'YYYY_MM_DDTHH_MM_SSZ'.
+    """
+    # Define the desired timestamp format
+    format="%Y_%m_%dT%H_%M_%SZ"
+    
+    global _timestamp_cache
+    # Generate the timestamp only if the cache is empty
+    if _timestamp_cache is None:
+        _timestamp_cache = datetime.now(timezone.utc).strftime(format)
+    
+    return _timestamp_cache
+
+================================================================================
+# YAML FILE: config\config.yaml
+================================================================================
+
+# Data ingestion configuration
+data_ingestion:
+  source_URL: https://raw.githubusercontent.com/megokul/text-summarizer/main/input_data/summarizer-data.zip
+  raw_data_filename: raw.zip
+  dataset_name: samsum_dataset
+
+# Data transformation configuration
+data_transformation:
+  preprocessor_filename: preprocessor.joblib
+
+# Model trainer configuration
+model_trainer:
+  root_dir: model_trainer
+  model_ckpt: google/pegasus-cnn_dailymail
+  inference_model_filename: inference_model
+  trained_model_filename: pegasus-samsum-model
+  training_report_filename: training_report.yaml
+
+model_evaluation:
+  report_filename: evaluation_report.yaml
+
+s3_handler:
+  bucket_name: textsummarizer-dev-artifacts 
+
+data_backup:
+  s3_enabled: true
+  local_enabled: true
+
+================================================================================
+# YAML FILE: config\params.yaml
+================================================================================
+
+# Parameters for data transformation
+data_transformation:
+  data_split:
+    train_size: 0.8
+    val_size: 0.1
+    test_size: 0.1
+    random_state: 42
+    stratify: false
+
+  tokenizer:
+    pretrained_model_name: google/pegasus-cnn_dailymail
+    max_input_length: 1024
+    max_target_length: 128
+
+# Model training arguments
+model_trainer:
+  training_arguments:
+    device: cuda
+    num_train_epochs: 3
+    warmup_steps: 500
+    per_device_train_batch_size: 2
+    per_device_eval_batch_size: 2
+    weight_decay: 0.01
+    logging_steps: 10
+    eval_strategy: steps
+    eval_steps: 500
+    save_steps: 5000
+    gradient_accumulation_steps: 8
+    learning_rate: 3e-5
+    fp16: true
+
+# MLflow tracking settings
+tracking:
+  mlflow:
+    enabled: true
+    experiment_name: TextSummarizationExperiment
+    registry_model_name: PegasusSummarizerModel
+    metrics_to_log:
+      - rouge1
+      - rouge2
+      - rougeL
+      - rougeLsum
+    log_trials: false
+
+# Model evaluation metrics
+model_evaluation:
+  metrics:
+    - rouge1
+    - rouge2
+    - rougeL
+    - rougeLsum
+    - bleu
+    - meteor

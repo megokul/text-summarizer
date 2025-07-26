@@ -1,0 +1,800 @@
+--- CODE DUMP | PART 3 of 5 ---
+
+
+================================================================================
+# PY FILE: src\textsummarizer\dbhandler\__init__.py
+================================================================================
+
+
+
+================================================================================
+# PY FILE: src\textsummarizer\dbhandler\base_handler.py
+================================================================================
+
+"""
+This module defines the abstract base class for all database and storage
+handlers, establishing a common interface for data operations.
+"""
+from abc import ABC, abstractmethod
+from pathlib import Path
+import pandas as pd
+
+from src.textsummarizer.exception.exception import TextSummarizerError
+from src.textsummarizer.logging import logger
+
+
+class DBHandler(ABC):
+    """
+    Abstract base class for all database and storage handlers.
+
+    This class defines a common interface for interacting with various data
+    sources like PostgreSQL, MongoDB, S3, or local files, ensuring
+    consistent behavior across the application. It also acts as a context
+    manager.
+    """
+
+    def __enter__(self) -> "DBHandler":
+        """
+        Enter the runtime context for the handler.
+
+        Returns:
+            DBHandler: The instance of the handler.
+        """
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """
+        Exit the runtime context and ensure resources are closed.
+
+        Raises:
+            TextSummarizerError: If closing the connection fails.
+        """
+        try:
+            self.close()
+        except Exception as e:
+            logger.info("An error occurred while closing the DBHandler.")
+            raise TextSummarizerError(e, logger) from e
+
+    @abstractmethod
+    def close(self) -> None:
+        """
+        Close any open connections or resources.
+        """
+        pass
+
+    @abstractmethod
+    def load_from_source(self) -> pd.DataFrame:
+        """
+        Load data from the primary source (e.g., a database table or file).
+        """
+        pass
+
+    def load_from_csv(self, source: Path) -> pd.DataFrame:
+        """
+        Load data from a CSV file into a pandas DataFrame.
+
+        Args:
+            source (Path): The path to the CSV file.
+
+        Raises:
+            TextSummarizerError: If the CSV file cannot be loaded.
+
+        Returns:
+            pd.DataFrame: The loaded DataFrame.
+        """
+        try:
+            df = pd.read_csv(source)
+            logger.info(f"DataFrame loaded successfully from CSV: {source.as_posix()}")
+            return df
+        except Exception as e:
+            logger.info(f"Failed to load DataFrame from CSV: '{source.as_posix()}'")
+            raise TextSummarizerError(e, logger) from e
+
+================================================================================
+# PY FILE: src\textsummarizer\dbhandler\s3_handler.py
+================================================================================
+
+import os
+import io
+from io import BytesIO, StringIO
+from pathlib import Path
+import zipfile
+import requests
+
+import boto3
+import joblib
+import numpy as np
+import pandas as pd
+import yaml
+from botocore.exceptions import ClientError
+
+from src.textsummarizer.dbhandler.base_handler import DBHandler
+from src.textsummarizer.entity.config_entity import S3HandlerConfig
+from src.textsummarizer.exception.exception import TextSummarizerError
+from src.textsummarizer.logging import logger
+
+class S3Handler(DBHandler):
+    """
+    AWS S3 Handler for file, directory, and DataFrame operations.
+    """
+
+    def __init__(self, config: S3HandlerConfig) -> None:
+        try:
+            self.s3_config = config
+            self._client = boto3.client("s3", region_name=self.s3_config.aws_region)
+            logger.info(
+                "S3Handler initialized for bucket '%s' in region '%s'",
+                self.s3_config.bucket_name,
+                self.s3_config.aws_region,
+            )
+        except Exception as e:
+            logger.info("Failed to initialize S3 client.")
+            raise TextSummarizerError(e, logger) from e
+
+    def __enter__(self) -> "S3Handler":
+        # Re-create the client if it was closed before (for robustness)
+        if self._client is None:
+            self._client = boto3.client("s3", region_name=self.s3_config.aws_region)
+            logger.info("S3Handler client re-initialized on context enter.")
+        logger.info("S3Handler context entered.")
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()
+        logger.info("S3Handler context exited.")
+
+    def close(self) -> None:
+        try:
+            self._client = None
+            logger.info("S3Handler resources released.")
+        except Exception as e:
+            logger.error("Error while closing S3Handler: %s", str(e))
+
+    def upload_file(self, local_path: Path, s3_key: str) -> str:
+        try:
+            if not local_path.is_file():
+                raise FileNotFoundError(f"Local file not found: {local_path.as_posix()}")
+            self._client.upload_file(
+                Filename=str(local_path),
+                Bucket=self.s3_config.bucket_name,
+                Key=s3_key,
+            )
+            s3_uri = f"s3://{self.s3_config.bucket_name}/{s3_key}"
+            logger.info("Uploaded: %s -> %s", local_path.as_posix(), s3_uri)
+            return s3_uri
+        except ClientError as e:
+            logger.info("AWS ClientError during file upload: %s", str(e))
+            raise TextSummarizerError(e, logger) from e
+        except Exception as e:
+            logger.info("Unexpected error during file upload: %s", str(e))
+            raise TextSummarizerError(e, logger) from e
+
+    def sync_directory(self, local_dir: Path, s3_prefix: str) -> None:
+        try:
+            if not local_dir.is_dir():
+                raise NotADirectoryError(f"Local directory not found: {local_dir.as_posix()}")
+
+            logger.info(
+                "Starting directory sync: %s -> s3://%s/%s",
+                local_dir.as_posix(),
+                self.s3_config.bucket_name,
+                s3_prefix,
+            )
+
+            for root, _, files in os.walk(local_dir):
+                for file in files:
+                    local_file_path = Path(root) / file
+                    relative_path = local_file_path.relative_to(local_dir)
+                    remote_key = f"{s3_prefix}/{relative_path.as_posix()}"
+                    self.upload_file(local_file_path, remote_key)
+
+            logger.info(
+                "Directory successfully synced: %s -> s3://%s/%s",
+                local_dir.as_posix(),
+                self.s3_config.bucket_name,
+                s3_prefix,
+            )
+        except Exception as e:
+            logger.info("Directory sync to S3 failed.")
+            raise TextSummarizerError(e, logger) from e
+
+    def upload_folder(self, local_dir: Path, s3_prefix: str) -> str:
+        self.sync_directory(local_dir, s3_prefix)
+        return f"s3://{self.s3_config.bucket_name}/{s3_prefix}"
+
+    def load_csv(self, s3_uri: str) -> pd.DataFrame:
+        try:
+            bucket, key = self._parse_s3_uri(s3_uri)
+            obj = self._client.get_object(Bucket=bucket, Key=key)
+            return pd.read_csv(obj["Body"])
+        except Exception as e:
+            logger.info("Failed to load CSV from S3.")
+            raise TextSummarizerError(e, logger) from e
+
+    def stream_csv(self, df: pd.DataFrame, s3_key: str) -> str:
+        try:
+            buf = StringIO()
+            df.to_csv(buf, index=False)
+            buf.seek(0)
+            self._client.put_object(
+                Bucket=self.s3_config.bucket_name,
+                Key=s3_key,
+                Body=buf.getvalue().encode("utf-8"),
+            )
+            s3_uri = f"s3://{self.s3_config.bucket_name}/{s3_key}"
+            logger.info("Streamed CSV to: %s", s3_uri)
+            return s3_uri
+        except Exception as e:
+            logger.info("Failed to stream CSV to S3.")
+            raise TextSummarizerError(e, logger) from e
+
+    def stream_yaml(self, data: dict, s3_key: str) -> str:
+        def _convert(obj):
+            if isinstance(obj, dict):
+                return {k: _convert(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [_convert(v) for v in obj]
+            if isinstance(obj, tuple):
+                return tuple(_convert(v) for v in obj)
+            if isinstance(obj, np.generic):
+                return obj.item()
+            return obj
+
+        try:
+            python_data = _convert(data)
+            buf = StringIO()
+            yaml.safe_dump(python_data, buf)
+            buf.seek(0)
+            self._client.put_object(
+                Bucket=self.s3_config.bucket_name,
+                Key=s3_key,
+                Body=buf.getvalue().encode("utf-8"),
+            )
+            s3_uri = f"s3://{self.s3_config.bucket_name}/{s3_key}"
+            logger.info("Streamed YAML to: %s", s3_uri)
+            return s3_uri
+        except Exception as e:
+            logger.info("Failed to stream YAML to S3.")
+            raise TextSummarizerError(e, logger) from e
+
+    def _parse_s3_uri(self, s3_uri: str) -> tuple[str, str]:
+        if not s3_uri.startswith("s3://"):
+            raise ValueError(f"Invalid S3 URI: {s3_uri}")
+        parts = s3_uri[5:].split("/", 1)
+        if len(parts) != 2:
+            raise ValueError(f"Invalid S3 URI: {s3_uri}")
+        return parts[0], parts[1]
+
+    def stream_object(self, obj: object, s3_key: str) -> str:
+        try:
+            buf = BytesIO()
+            joblib.dump(obj, buf)
+            buf.seek(0)
+            self._client.put_object(
+                Bucket=self.s3_config.bucket_name, Key=s3_key, Body=buf.read()
+            )
+            uri = f"s3://{self.s3_config.bucket_name}/{s3_key}"
+            logger.info("Streamed object to: %s", uri)
+            return uri
+        except Exception as e:
+            logger.info("Failed to stream object to S3.")
+            raise TextSummarizerError(e, logger) from e
+
+    def stream_npy(self, array: np.ndarray, s3_key: str) -> str:
+        try:
+            buf = BytesIO()
+            np.save(buf, array, allow_pickle=False)
+            buf.seek(0)
+            self._client.put_object(
+                Bucket=self.s3_config.bucket_name, Key=s3_key, Body=buf.read()
+            )
+            uri = f"s3://{self.s3_config.bucket_name}/{s3_key}"
+            logger.info("Streamed .npy to: %s", uri)
+            return uri
+        except Exception as e:
+            logger.info("Failed to stream .npy to S3.")
+            raise TextSummarizerError(e, logger) from e
+
+    def load_npy(self, s3_uri: str) -> np.ndarray:
+        try:
+            bucket, key = self._parse_s3_uri(s3_uri)
+            resp = self._client.get_object(Bucket=bucket, Key=key)
+            data = resp["Body"].read()
+            buf = BytesIO(data)
+            buf.seek(0)
+            arr = np.load(buf, allow_pickle=False)
+            logger.info("Loaded .npy from S3: %s", s3_uri)
+            return arr
+        except Exception as e:
+            logger.info("Failed to load .npy from S3.")
+            raise TextSummarizerError(e, logger) from e
+
+    def load_object(self, s3_uri: str) -> object:
+        try:
+            bucket, key = self._parse_s3_uri(s3_uri)
+            resp = self._client.get_object(Bucket=bucket, Key=key)
+            data = resp["Body"].read()
+            buf = BytesIO(data)
+            buf.seek(0)
+            obj = joblib.load(buf)
+            logger.info("Loaded object from S3: %s", s3_uri)
+            return obj
+        except Exception as e:
+            logger.info("Failed to load object from S3: %s", s3_uri)
+            raise TextSummarizerError(e, logger) from e
+
+    def stream_df_as_csv(self, df: pd.DataFrame, s3_key: str) -> str:
+        try:
+            buf = BytesIO()
+            df.to_csv(buf, index=False)
+            buf.seek(0)
+            self._client.put_object(
+                Bucket=self.s3_config.bucket_name,
+                Key=s3_key,
+                Body=buf.read(),
+                ContentType="text/csv",
+            )
+            uri = f"s3://{self.s3_config.bucket_name}/{s3_key}"
+            logger.info("Streamed DataFrame as CSV to: %s", uri)
+            return uri
+        except Exception as e:
+            logger.info("Failed to stream DataFrame as CSV to S3.")
+            raise TextSummarizerError(e, logger) from e
+
+    def extract_and_stream_zip_to_s3(self, source_zip_s3_key: str, destination_s3_key: str) -> str:
+        """
+        Downloads a ZIP file from S3, extracts its contents in memory,
+        and uploads extracted files to S3 under the given prefix.
+        """
+        try:
+            logger.info(f"Downloading ZIP from S3: {source_zip_s3_key}")
+            s3_obj = self._client.get_object(
+                Bucket=self.s3_config.bucket_name, Key=source_zip_s3_key
+            )
+            zip_bytes = s3_obj['Body'].read()
+            # Minimal zip header validation
+            if not zip_bytes.startswith(b'PK'):
+                logger.error("S3 object is not a valid ZIP file (missing ZIP signature).")
+                raise TextSummarizerError("S3 object is not a valid ZIP file.", logger)
+
+            with zipfile.ZipFile(BytesIO(zip_bytes)) as zip_ref:
+                for fileinfo in zip_ref.infolist():
+                    if fileinfo.is_dir():
+                        continue  # Skip directories
+                    file_data = zip_ref.read(fileinfo.filename)
+                    target_key = f"{destination_s3_key}/{fileinfo.filename}"
+                    logger.info(f"Uploading extracted file to S3: {target_key}")
+                    self._client.put_object(
+                        Bucket=self.s3_config.bucket_name,
+                        Key=target_key,
+                        Body=file_data,
+                    )
+
+            s3_uri = f"s3://{self.s3_config.bucket_name}/{destination_s3_key}"
+            logger.info(f"Extraction and streaming to S3 complete: {s3_uri}")
+            return s3_uri
+        except Exception as e:
+            logger.info("Failed to extract and stream ZIP to S3.")
+            raise TextSummarizerError(e, logger) from e
+
+    def stream_url_to_s3(self, url: str, s3_key: str, validate_zip: bool = True) -> str:
+        """
+        Streams the content from a remote URL directly to S3 (buffered in memory).
+        Optionally validates ZIP header if file is zip.
+
+        Args:
+            url (str): The source URL to stream from.
+            s3_key (str): The S3 key to upload the content to.
+            validate_zip (bool): If True, validates ZIP file header for .zip files.
+
+        Returns:
+            str: The S3 URI of the uploaded file.
+
+        Raises:
+            TextSummarizerError: On failure to download or upload.
+        """
+        try:
+            logger.info(f"Downloading content from URL for S3: {url}")
+            response = requests.get(url, stream=True)
+            response.raise_for_status()
+
+            # Read all bytes into memory
+            file_content = response.content
+
+            # Optional: ZIP file validation
+            if validate_zip and s3_key.endswith('.zip'):
+                if not file_content.startswith(b'PK'):
+                    logger.error("Downloaded file does not have ZIP signature.")
+                    raise TextSummarizerError("Downloaded file is not a valid ZIP archive.", logger)
+
+            # Upload to S3
+            self._client.put_object(
+                Bucket=self.s3_config.bucket_name,
+                Key=s3_key,
+                Body=file_content,
+            )
+            s3_uri = f"s3://{self.s3_config.bucket_name}/{s3_key}"
+            logger.info(f"Successfully streamed URL to S3: {s3_uri}")
+            return s3_uri
+
+        except Exception as e:
+            logger.error(f"Error streaming URL to S3: {e}")
+            raise TextSummarizerError(e, logger) from e
+
+
+
+    def load_from_source(self) -> pd.DataFrame:
+        """
+        Dummy implementation to satisfy DBHandler interface.
+        S3Handler does not support loading from source directly.
+        """
+        logger.warning("S3Handler.load_from_source() is not implemented and should not be used.")
+        return None
+
+================================================================================
+# PY FILE: src\textsummarizer\entity\__init__.py
+================================================================================
+
+
+
+================================================================================
+# PY FILE: src\textsummarizer\entity\artifact_entity.py
+================================================================================
+
+"""
+This module defines the data structures (dataclasses) for artifacts that are
+passed between different stages of the machine learning pipeline.
+"""
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+
+@dataclass(frozen=True)
+class DataIngestionArtifact:
+    """
+    Output of the data ingestion stage.
+
+    Attributes:
+        raw_filepath (Path | None): Local path to downloaded raw ZIP.
+        raw_s3_uri (str | None): S3 URI of uploaded raw ZIP.
+        ingested_filepath (Path | None): Local path to extracted/ingested data.
+        dvc_ingested_filepath (Path | None): DVC-tracked local ingested data.
+        ingested_s3_uri (str | None): S3 URI of extracted/ingested data.
+        dvc_ingested_s3_uri (str | None): DVC-tracked S3 ingested data.
+    """
+    raw_filepath: Optional[Path] = None
+    raw_s3_uri: Optional[str] = None
+    ingested_filepath: Optional[Path] = None
+    dvc_ingested_filepath: Optional[Path] = None
+    ingested_s3_uri: Optional[str] = None
+    dvc_ingested_s3_uri: Optional[str] = None
+
+    def __post_init__(self):
+        """Convert paths to absolute after initialization"""
+        if self.raw_filepath:
+            object.__setattr__(self, 'raw_filepath', self.raw_filepath.absolute())
+        if self.ingested_filepath:
+            object.__setattr__(self, 'ingested_filepath', self.ingested_filepath.absolute())
+        if self.dvc_ingested_filepath:
+            object.__setattr__(self, 'dvc_ingested_filepath', self.dvc_ingested_filepath.absolute())
+
+    def __repr__(self) -> str:
+        return (
+            "\nData Ingestion Artifact:\n"
+            f"  - Raw Local Path:        '{self.raw_filepath}'\n"
+            f"  - Raw S3 URI:            '{self.raw_s3_uri}'\n"
+            f"  - Ingested Local Path:   '{self.ingested_filepath}'\n"
+            f"  - DVC Ingested Local:    '{self.dvc_ingested_filepath}'\n"
+            f"  - Ingested S3 URI:       '{self.ingested_s3_uri}'\n"
+            f"  - DVC Ingested S3 URI:   '{self.dvc_ingested_s3_uri}'"
+        )
+
+@dataclass(frozen=True)
+class DataTransformationArtifact:
+    """
+    Represents the output of the data transformation stage.
+
+    Attributes:
+        dataset_dir (Path | None): Local path to the Hugging Face dataset directory.
+        dataset_s3_uri (str | None): S3 URI of the Hugging Face dataset directory.
+    """
+    dataset_dir: Optional[Path] = None
+    dataset_s3_uri: Optional[str] = None
+
+    def __repr__(self) -> str:
+        return (
+            "\nData Transformation Artifact:\n"
+            f"  - Dataset Directory:     '{self.dataset_dir}'\n"
+            f"  - Dataset S3 URI:        '{self.dataset_s3_uri}'"
+        )
+
+@dataclass(frozen=True)
+class ModelTrainerArtifact:
+    ...
+
+================================================================================
+# PY FILE: src\textsummarizer\entity\config_entity.py
+================================================================================
+
+"""
+This module defines the data structures (dataclasses) for configuration
+objects used throughout the text summarizer pipeline.
+"""
+from dataclasses import dataclass
+from pathlib import Path
+from box import ConfigBox
+
+from src.textsummarizer.exception.exception import TextSummarizerError
+from src.textsummarizer.logging import logger
+
+
+@dataclass
+class DataIngestionConfig:
+    """
+    Configuration for the data ingestion component.
+
+    Attributes:
+        root_dir (Path): The root directory for ingestion artifacts.
+        source_url (str): The URL from which to download the data.
+        raw_filepath (Path): The local path to save the raw downloaded file.
+        ingested_dir (Path): The local path for the extracted/ingested data.
+        dvc_ingested_dir (Path): The DVC-tracked path for the ingested data.
+        local_enabled (bool): Flag to enable/disable local saving.
+        s3_enabled (bool): Flag to enable/disable S3 upload.
+    """
+    root_dir: Path
+    source_url: str
+    raw_filepath: Path
+    ingested_dir: Path
+    dvc_ingested_dir: Path
+    local_enabled: bool
+    s3_enabled: bool
+    dataset_name: str
+
+    def __post_init__(self) -> None:
+        try:
+            self.root_dir = Path(self.root_dir)
+            self.raw_filepath = Path(self.raw_filepath)
+            self.ingested_dir = Path(self.ingested_dir)
+            self.dvc_ingested_dir = Path(self.dvc_ingested_dir)
+        except Exception as e:
+            from src.textsummarizer.exception.exception import TextSummarizerError
+            from src.textsummarizer.logging import logger
+            logger.info("Error during DataIngestionConfig path conversion.")
+            raise TextSummarizerError(e, logger) from e
+
+    @property
+    def raw_s3_key(self) -> str:
+        return self.raw_filepath.as_posix()
+
+    @property
+    def ingested_s3_key(self) -> str:
+        return self.ingested_dir.as_posix()
+
+    @property
+    def dvc_ingested_s3_key(self) -> str:
+        return self.dvc_ingested_dir.as_posix()
+
+    def __repr__(self) -> str:
+        parts = [
+            "\nData Ingestion Config:",
+            f"  - Root Dir:            {self.root_dir}",
+            f"  - Source URL:          {self.source_url}",
+            f"  - Raw Data Path:       {self.raw_filepath}",
+            f"  - Ingested Data Path:  {self.ingested_dir}",
+            f"  - Dataset Name:        {self.dataset_name}",
+            f"  - DVC Ingested Path:   {self.dvc_ingested_dir}",
+            f"  - Local Save Enabled:  {self.local_enabled}",
+            f"  - S3 Upload Enabled:   {self.s3_enabled}",
+            f"  - Raw S3 Key:          {self.raw_s3_key}",
+            f"  - Ingested S3 Key:     {self.ingested_s3_key}",
+            f"  - DVC Ingested S3 Key: {self.dvc_ingested_s3_key}",
+        ]
+        return "\n".join(parts)
+
+
+@dataclass
+class S3HandlerConfig:
+    """
+    Configuration for the S3 handler.
+
+    Attributes:
+        root_dir (Path): The root directory for S3 handler artifacts.
+        bucket_name (str): The name of the S3 bucket.
+        aws_region (str): The AWS region of the S3 bucket.
+    """
+
+    root_dir: Path
+    bucket_name: str
+    aws_region: str
+
+    def __post_init__(self) -> None:
+        """Ensures root_dir is a Path object."""
+        try:
+            self.root_dir = Path(self.root_dir)
+        except Exception as e:
+            logger.info("Error during S3HandlerConfig path conversion.")
+            raise TextSummarizerError(e, logger) from e
+
+    def __repr__(self) -> str:
+        """Return a formatted string representation of the configuration."""
+        return (
+            "\nS3 Handler Config:\n"
+            f"  - Root Dir:              {self.root_dir}\n"
+            f"  - Bucket Name:           {self.bucket_name}\n"
+            f"  - AWS Region:            {self.aws_region}\n"
+        )
+
+
+@dataclass
+class DataTransformationConfig:
+    """
+    Configuration for the data transformation component.
+
+    Attributes:
+        root_dir (Path): Root directory for transformation artifacts.
+        tokenizer_name (str): Name of the Hugging Face tokenizer.
+        max_input_length (int): Max token length for input sequences.
+        max_target_length (int): Max token length for target sequences.
+        train_size (float): Proportion of data for the training set.
+        val_size (float): Proportion of data for the validation set.
+        test_size (float): Proportion of data for the test set.
+        random_state (int): Seed for random operations.
+        stratify (bool): Whether to use stratified splitting.
+        local_enabled (bool): Flag to enable/disable local saving.
+        s3_enabled (bool): Flag to enable/disable S3 upload.
+    """
+
+    root_dir: Path
+    tokenizer_name: str
+    max_input_length: int
+    max_target_length: int
+    train_size: float
+    val_size: float
+    test_size: float
+    random_state: int
+    stratify: bool
+    local_enabled: bool
+    s3_enabled: bool
+
+    def __post_init__(self) -> None:
+        """Ensures all path-like attributes are Path objects."""
+        try:
+            self.root_dir = Path(self.root_dir)
+        except Exception as e:
+            logger.info("Error during DataTransformationConfig path conversion.")
+            raise TextSummarizerError(e, logger) from e
+
+    def __repr__(self) -> str:
+        """Return a formatted string representation of the configuration."""
+        parts = [
+            "\nData Transformation Config:",
+            f"  - Root Dir:              {self.root_dir}",
+            f"  - Tokenizer Name:        {self.tokenizer_name}",
+            f"  - Max Input Length:      {self.max_input_length}",
+            f"  - Max Target Length:     {self.max_target_length}",
+            f"  - Train Size:            {self.train_size}",
+            f"  - Val Size:              {self.val_size}",
+            f"  - Test Size:             {self.test_size}",
+            f"  - Random State:          {self.random_state}",
+            f"  - Stratify:              {self.stratify}",
+            f"  - Local Save Enabled:    {self.local_enabled}",
+            f"  - S3 Upload Enabled:     {self.s3_enabled}",
+        ]
+        return "\n".join(parts)
+
+
+@dataclass
+class ModelTrainerConfig:
+    """
+    Configuration for the model training component.
+
+    Attributes:
+        root_dir (Path): Root directory for trainer artifacts.
+        model_ckpt (str): Pre-trained model checkpoint from Hugging Face.
+        num_train_epochs (int): Number of training epochs.
+        warmup_steps (int): Number of warmup steps for the learning rate scheduler.
+        per_device_train_batch_size (int): Batch size per device during training.
+        per_device_eval_batch_size (int): Batch size per device during evaluation.
+        weight_decay (float): Weight decay for regularization.
+        logging_steps (int): Log every X updates steps.
+        evaluation_strategy (str): Evaluation strategy ('steps' or 'epoch').
+        eval_steps (int): Evaluate every X steps.
+        save_steps (float): Save checkpoint every X steps.
+        gradient_accumulation_steps (int): Number of steps to accumulate gradients.
+        learning_rate (float): The initial learning rate for AdamW.
+        fp16 (bool): Whether to use 16-bit (mixed) precision training.
+    """
+
+    root_dir: Path
+    model_ckpt: str
+    num_train_epochs: int
+    warmup_steps: int
+    per_device_train_batch_size: int
+    per_device_eval_batch_size: int
+    weight_decay: float
+    logging_steps: int
+    eval_strategy: str
+    eval_steps: int
+    save_steps: float
+    gradient_accumulation_steps: int
+    learning_rate: float
+    fp16: bool
+
+
+@dataclass
+class ModelEvaluationConfig:
+    """
+    Configuration for the model evaluation component.
+
+    Attributes:
+        root_dir (Path): Root directory for evaluation artifacts.
+        report_path (Path): Path to save the evaluation report.
+    """
+
+    root_dir: Path
+    report_path: Path
+
+================================================================================
+# PY FILE: src\textsummarizer\exception\__init__.py
+================================================================================
+
+
+
+================================================================================
+# PY FILE: src\textsummarizer\exception\exception.py
+================================================================================
+
+"""Custom exception handling for Text Summarizer project."""
+import sys
+from types import TracebackType
+from logging import Logger
+from typing import Union, Optional
+
+
+class TextSummarizerError(Exception):
+    """Custom exception with built-in logging and traceback capture.
+
+    Automatically logs errors and captures traceback details when raised.
+    """
+
+    def __init__(self, error: Union[Exception, str], logger: Optional[Logger] = None) -> None:
+        """Initialize with original error/string and logger instance.
+
+        Args:
+            error: Original exception or error message string
+            logger: Logger instance for error logging (optional)
+        """
+        if isinstance(error, Exception):
+            error_message = str(error)
+            super().__init__(error_message)
+            self.message = error_message
+            
+            # Capture traceback info
+            _, _, tb = sys.exc_info()
+            self.line = tb.tb_lineno if tb else None
+            self.file = (
+                tb.tb_frame.f_code.co_filename 
+                if tb and tb.tb_frame 
+                else "Unknown"
+            )
+        else:
+            # If it's a string
+            super().__init__(error)
+            self.message = error
+            self.file = "Unknown"
+            self.line = None
+
+        if logger:
+            try:
+                logger.info(f"Error during exception handling: {self}")
+            except Exception:
+                # Fallback to simple error message if logging fails
+                print(f"Error: {self}")
+
+    def __str__(self) -> str:
+        """Formatted error string with file, line, and message."""
+        if self.file != "Unknown" and self.line:
+            return f"Error in file [{self.file}], line [{self.line}]: {self.message}"
+        else:
+            return self.message
