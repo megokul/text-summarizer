@@ -1,3 +1,12 @@
+import mlflow
+from dagshub import dagshub_logger
+
+# Optionally, initialize DagsHub MLflow plugin at the very beginning
+import dagshub
+
+# Initialize DagsHub MLflow integration (place at the very top, after imports)
+dagshub.init("text-summarizer", repo_owner="megokul")
+
 from src.textsummarizer.config.configuration import ConfigurationManager
 from src.textsummarizer.exception.exception import TextSummarizerError
 from src.textsummarizer.dbhandler.s3_handler import S3Handler

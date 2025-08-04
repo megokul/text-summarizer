@@ -106,7 +106,8 @@ class ModelTrainer:
             save_steps=int(self.trainer_config.save_steps),
             gradient_accumulation_steps=int(self.trainer_config.gradient_accumulation_steps),
             learning_rate=float(self.trainer_config.learning_rate),
-            fp16=getattr(self.trainer_config, "fp16", False)
+            fp16=getattr(self.trainer_config, "fp16", False),
+            report_to="mlflow",
         )
         logger.info("Training arguments initialized.")
         return args

@@ -144,7 +144,6 @@ class ConfigurationManager:
                 root_dir=root_dir,
                 tokenized_dataset_dir=tokenized_dataset_dir,
                 dvc_tokenized_dataset_dir=dvc_tokenized_dataset_dir,
-                
 
                 # Tokenizer settings
                 tokenizer_name=params.tokenizer.pretrained_model_name,
@@ -162,25 +161,27 @@ class ConfigurationManager:
 
     def get_model_trainer_config(self) -> ModelTrainerConfig:
         config = self.config.model_trainer
+        ingestion_config = self.config.data_ingestion
         params = self.params.model_trainer.training_arguments
         root_dir = self.artifacts_root / TRAINER_ROOT
+        data_path = root_dir / TRANSFORM_ROOT / ingestion_config.dataset_name
         data_backup_config = self.config.data_backup
 
         model_trainer_config = ModelTrainerConfig(
             root_dir=root_dir,
-            data_path=self.artifacts_root / "data_transformation" / "samsum_dataset",
-            model_ckpt = config.model_ckpt,
-            num_train_epochs = params.num_train_epochs,
-            warmup_steps = params.warmup_steps,
-            per_device_train_batch_size = params.per_device_train_batch_size,
-            per_device_eval_batch_size = params.per_device_eval_batch_size,
-            weight_decay = params.weight_decay,
-            logging_steps = params.logging_steps,
-            learning_rate= params.learning_rate,
-            eval_strategy = params.eval_strategy,
-            eval_steps = params.eval_steps,
-            save_steps = params.save_steps,
-            gradient_accumulation_steps = params.gradient_accumulation_steps,
+            data_path=data_path,
+            model_ckpt=config.model_ckpt,
+            num_train_epochs=params.num_train_epochs,
+            warmup_steps=params.warmup_steps,
+            per_device_train_batch_size=params.per_device_train_batch_size,
+            per_device_eval_batch_size=params.per_device_eval_batch_size,
+            weight_decay=params.weight_decay,
+            logging_steps=params.logging_steps,
+            learning_rate=params.learning_rate,
+            eval_strategy=params.eval_strategy,
+            eval_steps=params.eval_steps,
+            save_steps=params.save_steps,
+            gradient_accumulation_steps=params.gradient_accumulation_steps,
             local_enabled=data_backup_config.local_enabled,
             s3_enabled=data_backup_config.s3_enabled,
         )
