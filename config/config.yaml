@@ -1,19 +1,16 @@
 
 # Data ingestion configuration
 data_ingestion:
-  source_URL: https://github.com/megokul/text-summarizer/blob/main/input_data/summarizer-data.zip
+  source_URL: https://raw.githubusercontent.com/megokul/text-summarizer/main/input_data/summarizer-data.zip
   raw_data_filename: raw.zip
-  ingested_data_filename: ingested_data.csv
+  dataset_name: samsum_dataset
 
-# Data transformation configuration
 data_transformation:
-  train_filename: train.csv
-  val_filename: val.csv
-  test_filename: test.csv
-  preprocessor_filename: preprocessor.joblib
+  tokenized_dataset_dir: tokenized_data
 
 # Model trainer configuration
 model_trainer:
+  model_ckpt: google/pegasus-cnn_dailymail
   inference_model_filename: inference_model
   trained_model_filename: pegasus-samsum-model
   training_report_filename: training_report.yaml
@@ -27,4 +24,3 @@ s3_handler:
 data_backup:
   s3_enabled: true
   local_enabled: true
-

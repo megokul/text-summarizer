@@ -1,123 +1,123 @@
 import zipfile
-from pathlib import Path
-import pandas as pd
 import shutil
+from pathlib import Path
+from typing import Optional
+import posixpath
 
-from src.textsummarizer.entity.config_entity import DataIngestionConfig
 from src.textsummarizer.entity.artifact_entity import DataIngestionArtifact
+from src.textsummarizer.entity.config_entity import DataIngestionConfig
 from src.textsummarizer.exception.exception import TextSummarizerError
 from src.textsummarizer.logging import logger
-from src.textsummarizer.dbhandler.s3_handler import S3Handler
-from src.textsummarizer.utils.core import save_to_csv, download_file
-
+from src.textsummarizer.dbhandler.base_handler import DBHandler
+from src.textsummarizer.utils.core import download_file
+from box import ConfigBox
 
 class DataIngestion:
-    """
-    Production-grade data ingestion component:
-    - Downloads dataset with retries
-    - Extracts ZIP contents into DataFrame
-    - Saves to local + DVC path
-    - Optionally uploads to S3
-    - Returns DataIngestionArtifact with all paths/URIs
-    """
+    """Orchestrates data downloading, extraction, and persistence."""
 
     def __init__(
         self,
-        ingestion_config: DataIngestionConfig,
-        backup_handler: S3Handler | None = None
+        config: DataIngestionConfig,
+        backup_handler: Optional[DBHandler] = None,
     ) -> None:
-        self.ingestion_config = ingestion_config
+        self.ingestion_config = config
         self.backup_handler = backup_handler
+        self.local_enabled = self.ingestion_config.local_enabled
+        self.s3_enabled = self.ingestion_config.s3_enabled
 
-    def _extract_zip_to_dataframe(self) -> pd.DataFrame:
-        """
-        Extracts the first CSV file inside the ZIP archive into a DataFrame.
-        """
+    def _download_data(self) -> dict:
+        results = {
+            "raw_filepath": None,
+            "raw_s3_uri": None,
+        }
+        url = self.ingestion_config.source_url
+
+        if self.local_enabled:
+            logger.info("Downloading ZIP locally to: %s", self.ingestion_config.raw_filepath)
+            download_file(
+                url=url,
+                download_path=self.ingestion_config.raw_filepath,
+            )
+            results["raw_filepath"] = self.ingestion_config.raw_filepath
+
+        if self.s3_enabled and self.backup_handler:
+            logger.info("Streaming ZIP to S3: %s", self.ingestion_config.raw_s3_key)
+            with self.backup_handler as handler:
+                s3_uri = handler.stream_url_to_s3(
+                    url=url,
+                    s3_key=self.ingestion_config.raw_s3_key,
+                )
+            results["raw_s3_uri"] = s3_uri
+
+        return ConfigBox(results)
+
+    def _extract_zip(self) -> dict:
+        results = {
+            "ingested_filepath": None,
+            "dvc_ingested_filepath": None,
+            "ingested_s3_uri": None,
+            "dvc_ingested_s3_uri": None,
+        }
         try:
-            zip_path = self.ingestion_config.raw_filepath
-            logger.info(f"Extracting ZIP file: {zip_path}")
+            # Local extraction
+            if self.local_enabled:
+                zip_path = self.ingestion_config.raw_filepath
+                ingested_dir = self.ingestion_config.ingested_dir
+                ingested_dir.mkdir(parents=True, exist_ok=True)
+                logger.info("Extracting ZIP locally to: %s", ingested_dir)
+                with zipfile.ZipFile(zip_path, "r") as zip_ref:
+                    zip_ref.extractall(ingested_dir)
+                logger.info("Extraction complete.")
+                results["ingested_filepath"] = ingested_dir / self.ingestion_config.dataset_name
 
-            with zipfile.ZipFile(zip_path, "r") as zip_ref:
-                csv_files = [name for name in zip_ref.namelist() if name.endswith('.csv')]
-                if not csv_files:
-                    raise ValueError("No CSV file found in ZIP archive.")
-                csv_name = csv_files[0]
-                logger.info(f"Found CSV in ZIP: {csv_name}")
+                # DVC-tracked ingested data
+                dvc_ingested = self.ingestion_config.dvc_ingested_dir
+                if dvc_ingested.exists():
+                    shutil.rmtree(dvc_ingested)
+                shutil.copytree(ingested_dir, dvc_ingested)
+                results["dvc_ingested_filepath"] = dvc_ingested / self.ingestion_config.dataset_name
 
-                with zip_ref.open(csv_name) as f:
-                    df = pd.read_csv(f)
-
-            logger.info("Extraction successful. DataFrame created.")
-            return df
-
-        except Exception as e:
-            logger.error("Error during ZIP extraction.")
-            raise TextSummarizerError(e, logger) from e
-
-    def _persist_data(self, df: pd.DataFrame) -> dict:
-        """
-        Saves data to local + DVC + S3 (based on config) and returns file path/URI dictionary.
-        """
-        try:
-            conf = self.ingestion_config
-            paths = {
-                "raw_filepath": None,
-                "dvc_raw_filepath": None,
-                "ingested_filepath": None,
-                "raw_s3_uri": None,
-                "dvc_raw_s3_uri": None,
-                "ingested_s3_uri": None,
-            }
-
-            if conf.local_enabled:
-                logger.info("Saving files locally...")
-                paths["raw_filepath"] = conf.raw_filepath
-
-                # Copy raw ZIP to DVC path
-                conf.dvc_raw_filepath.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy(conf.raw_filepath, conf.dvc_raw_filepath)
-                paths["dvc_raw_filepath"] = conf.dvc_raw_filepath
-
-                # Save ingested DataFrame
-                save_to_csv(df, conf.ingested_filepath, label="Ingested Data")
-                paths["ingested_filepath"] = conf.ingested_filepath
-
-            if conf.s3_enabled and self.backup_handler:
-                logger.info("Uploading files to S3...")
+            # S3 extraction
+            if self.s3_enabled and self.backup_handler:
+                logger.info("Extracting ZIP in S3: %s -> %s", self.ingestion_config.raw_s3_key, self.ingestion_config.ingested_s3_key)
                 with self.backup_handler as handler:
-                    paths["raw_s3_uri"] = handler.upload_file(
-                        conf.raw_filepath, conf.raw_s3_key
-                    )
-                    paths["dvc_raw_s3_uri"] = handler.upload_file(
-                        conf.dvc_raw_filepath, conf.dvc_raw_s3_key
-                    )
-                    paths["ingested_s3_uri"] = handler.stream_csv(
-                        df, conf.ingested_s3_key
+                    ingested_s3_uri = handler.extract_and_stream_zip_to_s3(
+                        source_zip_s3_key=self.ingestion_config.raw_s3_key,
+                        destination_s3_key=self.ingestion_config.ingested_s3_key,
                     )
 
-            return paths
+                    results["ingested_s3_uri"] = posixpath.join(ingested_s3_uri, self.ingestion_config.dataset_name)
+
+                    # DVC ingested S3
+                    if self.ingestion_config.dvc_ingested_s3_key:
+                        dvc_ingested_s3_uri = handler.upload_dir(
+                            local_dir=self.ingestion_config.dvc_ingested_dir,
+                            s3_prefix=self.ingestion_config.dvc_ingested_s3_key,
+                        )
+                        results["dvc_ingested_s3_uri"] = posixpath.join(dvc_ingested_s3_uri, self.ingestion_config.dataset_name)
+
+            return ConfigBox(results)
 
         except Exception as e:
-            logger.error("Error during file persistence.")
+            logger.info("Error during ZIP extraction")
             raise TextSummarizerError(e, logger) from e
 
     def run_ingestion(self) -> DataIngestionArtifact:
-        """
-        Executes full ingestion pipeline:
-        - Downloads
-        - Extracts
-        - Saves
-        - Returns artifact
-        """
         try:
-            logger.info("=== Starting Data Ingestion ===")
-            download_file(url=self.ingestion_config.source_url, raw_filepath=self.ingestion_config.raw_filepath)
-            df = self._extract_zip_to_dataframe()
-            persisted = self._persist_data(df)
-
-            artifact = DataIngestionArtifact(**persisted)
-            logger.info(f"Ingestion completed.\nArtifact:\n{artifact}")
+            logger.info("Starting data ingestion...")
+            download_info = self._download_data()
+            extract_info = self._extract_zip()
+            artifact = DataIngestionArtifact(
+                raw_filepath=Path(download_info.raw_filepath).absolute() if download_info.raw_filepath else None,
+                raw_s3_uri=download_info.raw_s3_uri,
+                ingested_filepath=Path(extract_info.ingested_filepath).absolute() if extract_info.ingested_filepath else None,
+                dvc_ingested_filepath=Path(extract_info.dvc_ingested_filepath).absolute() if extract_info.dvc_ingested_filepath else None,
+                ingested_s3_uri=extract_info.ingested_s3_uri,
+                dvc_ingested_s3_uri=extract_info.dvc_ingested_s3_uri,
+            )
+            logger.info(f"Data ingestion complete: {artifact}")
             return artifact
 
         except Exception as e:
+            logger.info("Data ingestion pipeline failed")
             raise TextSummarizerError(e, logger) from e

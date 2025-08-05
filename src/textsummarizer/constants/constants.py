@@ -67,10 +67,7 @@ TEST_LABEL = "test"
 # ==============================================================================
 # Directories for data transformation artifacts
 TRANSFORM_ROOT = "data_transformation"
-TRANSFORM_TRAIN_SUBDIR = "train"
-TRANSFORM_TEST_SUBDIR = "test"
-TRANSFORM_VAL_SUBDIR = "val"
-TRANSFORM_PROCESSOR_SUBDIR = "data_processor"
+TRANSFORM_TOKENIZED_SUBDIR = "tokenized_data"
 
 
 # ==============================================================================
@@ -78,16 +75,16 @@ TRANSFORM_PROCESSOR_SUBDIR = "data_processor"
 # ==============================================================================
 # Directories for model training artifacts
 TRAINER_ROOT = "model_trainer"
-TRAINER_MODEL_SUBDIR = "model"
-TRAINER_REPORTS_SUBDIR = "reports"
-TRAINER_INFERENCE_SUBDIR = "inference_model"
-
+TRAINER_MODEL_SUBDIR = "pegasus_samsum_model"
+TRAINER_TOKENIZER_SUBDIR = "pegasus_samsum_tokenizer"
 
 # ==============================================================================
 # INFERENCE AND EVALUATION CONSTANTS
 # ==============================================================================
-# Root directory for inference models
-INFERENCE_MODEL_ROOT = "inference_model"
+# Root directory for final models
+FINAL_MODEL_ROOT = "final_model"
+FINAL_MODEL_SUBDIR = "model"
+FINAL_TOKENIZER_SUBDIR = "tokenizer"
 
 # Directories for model evaluation artifacts
 EVALUATION_ROOT = "model_evaluation"

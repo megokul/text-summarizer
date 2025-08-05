@@ -271,7 +271,7 @@ def load_object(path: Path, label: str):
         raise TextSummarizerError(e, logger) from e
 
 
-def download_file(url: str, raw_filepath: Path, retries: int = 3, delay: float = 2.0) -> None:
+def download_file(url: str, download_path: Path, retries: int = 3, delay: float = 2.0) -> None:
     """
     Downloads dataset from configured URL with retries.
     Converts GitHub blob URLs to raw content.
@@ -280,11 +280,11 @@ def download_file(url: str, raw_filepath: Path, retries: int = 3, delay: float =
         url = url.replace("/blob/", "/raw/")
         logger.info(f"Converted GitHub blob URL to raw URL: {url}")
 
-    if raw_filepath.exists():
-        logger.info(f"Dataset already exists at: {raw_filepath}. Skipping download.")
+    if download_path.exists():
+        logger.info(f"Dataset already exists at: {download_path}. Skipping download.")
         return
 
-    raw_filepath.parent.mkdir(parents=True, exist_ok=True)
+    download_path.parent.mkdir(parents=True, exist_ok=True)
 
     for attempt in range(1, retries + 1):
         try:
@@ -292,11 +292,11 @@ def download_file(url: str, raw_filepath: Path, retries: int = 3, delay: float =
             response = requests.get(url, stream=True)
             response.raise_for_status()
 
-            with open(raw_filepath, 'wb') as f:
+            with open(download_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
 
-            logger.info(f"Download successful. File saved to: {raw_filepath}")
+            logger.info(f"Download successful. File saved to: {download_path}")
             return
 
         except Exception as e:

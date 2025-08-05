@@ -1,3 +1,12 @@
+import mlflow
+from dagshub import dagshub_logger
+
+# Optionally, initialize DagsHub MLflow plugin at the very beginning
+import dagshub
+
+# Initialize DagsHub MLflow integration (place at the very top, after imports)
+dagshub.init("text-summarizer", repo_owner="megokul")
+
 from src.textsummarizer.config.configuration import ConfigurationManager
 from src.textsummarizer.exception.exception import TextSummarizerError
 from src.textsummarizer.dbhandler.s3_handler import S3Handler
@@ -5,7 +14,7 @@ from src.textsummarizer.logging import logger
 
 from src.textsummarizer.components.data_ingestion import DataIngestion
 from src.textsummarizer.components.data_transformation import DataTransformation
-# from src.textsummarizer.components.model_trainer import ModelTrainer
+from src.textsummarizer.components.model_trainer import ModelTrainer
 # from src.textsummarizer.components.model_evaluation import ModelEvaluation
 
 
@@ -34,7 +43,7 @@ class TrainingPipeline:
             # Step 2: Run data ingestion
             data_ingestion_config = self.config_manager.get_data_ingestion_config()
             data_ingestion = DataIngestion(
-                ingestion_config=data_ingestion_config,
+                config=data_ingestion_config,
                 backup_handler=s3_handler,
             )
             data_ingestion_artifact = data_ingestion.run_ingestion()
@@ -44,8 +53,9 @@ class TrainingPipeline:
             if data_ingestion_artifact:
                 data_transformation_config = self.config_manager.get_data_transformation_config()
                 data_transformation = DataTransformation(
-                    transformation_config=data_transformation_config,
-                    ingestion_artifact=data_ingestion_artifact,
+                    config=data_transformation_config,
+                    artifact=data_ingestion_artifact,
+                    backup_handler=s3_handler,
                 )
                 data_transformation_artifact = data_transformation.run_transformation()
                 logger.info(f"Data Transformation Artifact: {data_transformation_artifact}")
@@ -53,14 +63,12 @@ class TrainingPipeline:
                 logger.warning("Data validation failed. Skipping subsequent steps.")
                 return
 
-            # # Step 5: Run model training
-            # model_trainer_config = self.config_manager.get_model_trainer_config()
-            # model_trainer = ModelTrainer(
-            #     trainer_config=model_trainer_config,
-            #     transformation_artifact=data_transformation_artifact,
-            # )
-            # model_trainer_artifact = model_trainer.run_training()
-            # logger.info(f"Model Trainer Artifact: {model_trainer_artifact}")
+            # Step 5: Run model training
+            model_trainer_config = self.config_manager.get_model_trainer_config()
+            model_trainer = ModelTrainer(config=model_trainer_config,
+                                         artifact=data_transformation_artifact,
+                                         backup_handler=s3_handler)
+            model_trainer.train()
 
             # # Step 6: Run model evaluation
             # model_evaluation_config = self.config_manager.get_model_evaluation_config()

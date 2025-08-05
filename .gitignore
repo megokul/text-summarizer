@@ -1,5 +1,7 @@
 # Python
 venv/
+final_model/
+model_backup/
 .env
 __pycache__/
 *.pyc
@@ -14,7 +16,12 @@ __pycache__/
 .dvc/cache/
 artifacts/
 data/
+logs/
 
 # Other
 *.log
 *.tmp
+
+# Project-specific
+project_code_dump_index.txt
+project_code_dump_part*.txt
