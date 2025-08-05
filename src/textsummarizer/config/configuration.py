@@ -12,13 +12,6 @@ from src.textsummarizer.constants.constants import (
     INGEST_ROOT,
     PARAMS_FILENAME,
     TRANSFORM_ROOT,
-    TRANSFORM_TOKENIZED_SUBDIR,
-    TRAINER_ROOT,
-    TRAINER_MODEL_SUBDIR,
-    TRAINER_TOKENIZER_SUBDIR,
-    FINAL_MODEL_ROOT,
-    FINAL_MODEL_SUBDIR,
-    FINAL_TOKENIZER_SUBDIR,
 )
 from src.textsummarizer.entity.config_entity import (
     DataIngestionConfig,
@@ -141,9 +134,9 @@ class ConfigurationManager:
         try:
             params = self.params.data_transformation
             root_dir = self.artifacts_root / TRANSFORM_ROOT
-            tokenized_dataset_dir = root_dir / TRANSFORM_TOKENIZED_SUBDIR
-            dvc_tokenized_dataset_dir = Path(DVC_ROOT) / TRANSFORM_TOKENIZED_SUBDIR
-            data_backup_config = self.config.data_backup
+            train_filepath = root_dir / config.train_filename
+            val_filepath = root_dir / config.val_filename
+            test_filepath = root_dir / config.test_filename
 
             data_transformation_config = DataTransformationConfig(
                 root_dir=root_dir,
@@ -163,37 +156,3 @@ class ConfigurationManager:
 
         except Exception as e:
             raise TextSummarizerError(e, logger) from e
-
-    def get_model_trainer_config(self) -> ModelTrainerConfig:
-        config = self.config.model_trainer
-        params = self.params.model_trainer.training_arguments
-        root_dir = self.artifacts_root / TRAINER_ROOT
-        data_backup_config = self.config.data_backup
-        final_model_dir = Path(FINAL_MODEL_ROOT) / FINAL_MODEL_SUBDIR
-        final_tokenizer_dir = Path(FINAL_MODEL_ROOT) / FINAL_TOKENIZER_SUBDIR
-        model_dir = root_dir / TRAINER_MODEL_SUBDIR
-        tokenizer_dir = root_dir / TRAINER_TOKENIZER_SUBDIR
-
-        model_trainer_config = ModelTrainerConfig(
-            root_dir=root_dir,
-            model_ckpt=config.model_ckpt,
-            num_train_epochs=params.num_train_epochs,
-            warmup_steps=params.warmup_steps,
-            per_device_train_batch_size=params.per_device_train_batch_size,
-            per_device_eval_batch_size=params.per_device_eval_batch_size,
-            weight_decay=params.weight_decay,
-            logging_steps=params.logging_steps,
-            learning_rate=params.learning_rate,
-            eval_strategy=params.eval_strategy,
-            eval_steps=params.eval_steps,
-            save_steps=params.save_steps,
-            gradient_accumulation_steps=params.gradient_accumulation_steps,
-            local_enabled=data_backup_config.local_enabled,
-            s3_enabled=data_backup_config.s3_enabled,
-            final_model_dir=final_model_dir,
-            final_tokenizer_dir=final_tokenizer_dir,
-            model_dir=model_dir,
-            tokenizer_dir=tokenizer_dir,
-        )
-
-        return model_trainer_config
