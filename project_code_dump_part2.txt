@@ -1,0 +1,648 @@
+--- CODE DUMP | PART 2 of 5 ---
+
+
+================================================================================
+# PY FILE: src\textsummarizer\components\data_transformation.py
+================================================================================
+
+import os
+import shutil
+from transformers import AutoTokenizer
+from datasets import load_from_disk, DatasetDict
+from src.textsummarizer.entity.artifact_entity import DataTransformationArtifact
+from src.textsummarizer.logging import logger
+from src.textsummarizer.exception.exception import TextSummarizerError
+from typing import Optional
+from pathlib import Path
+
+class DataTransformation:
+    def __init__(
+        self,
+        config,
+        artifact,
+        backup_handler: Optional[object] = None,
+    ):
+        self.config = config
+        self.ingestion_artifact = artifact
+        self.backup_handler = backup_handler
+        self.tokenizer = AutoTokenizer.from_pretrained(self.config.tokenizer_name)
+
+    def _load_data(self) -> DatasetDict:
+        """
+        Loads dataset from S3 or local, depending on config flags.
+        Uses ConfigBox for attribute access.
+        """
+        try:
+            # Local
+            if self.config.local_enabled and self.ingestion_artifact.ingested_filepath:
+                dataset_path = self.ingestion_artifact.ingested_filepath
+                logger.info(f"Loading dataset from local path: {dataset_path}")
+                # Use absolute path as string with proper Windows formatting
+                dataset = load_from_disk(str(dataset_path))
+                return dataset
+
+            # S3
+            if self.config.s3_enabled and self.backup_handler and self.ingestion_artifact.ingested_s3_uri:
+                logger.info(f"Loading dataset from S3: {self.ingestion_artifact.ingested_s3_uri}")
+                with self.backup_handler as handler:
+                    local_tmp_dir = Path("tmp_ingested_data")
+                    if local_tmp_dir.exists():
+                        shutil.rmtree(local_tmp_dir)
+                    os.makedirs(local_tmp_dir, exist_ok=True)
+                    handler.download_folder(
+                        s3_prefix=self.config.ingested_s3_key,
+                        local_dir=local_tmp_dir,
+                    )
+                    logger.info(f"Downloaded S3 ingested data to temp dir: {local_tmp_dir}")
+                    dataset = load_from_disk(str(local_tmp_dir))
+                    return dataset
+
+            raise TextSummarizerError("No valid dataset location found for loading.", logger)
+
+        except Exception as e:
+            logger.info("Failed to load dataset")
+            raise TextSummarizerError(e, logger) from e
+
+    def _tokenize_data(self, dataset: DatasetDict) -> DatasetDict:
+        try:
+            def convert_examples_to_features(example_batch):
+                input_encodings = self.tokenizer(
+                    example_batch['dialogue'],
+                    max_length=self.config.max_input_length,
+                    truncation=True,
+                    padding="max_length",
+                )
+                with self.tokenizer.as_target_tokenizer():
+                    target_encodings = self.tokenizer(
+                        example_batch['summary'],
+                        max_length=self.config.max_target_length,
+                        truncation=True,
+                        padding="max_length",
+                    )
+                return {
+                    'input_ids': input_encodings['input_ids'],
+                    'attention_mask': input_encodings['attention_mask'],
+                    'labels': target_encodings['input_ids'],
+                }
+            logger.info("Tokenizing dataset splits...")
+            tokenized = dataset.map(convert_examples_to_features, batched=True)
+            logger.info("Tokenization complete.")
+            return tokenized
+        except Exception as e:
+            logger.info("Error during batch tokenization")
+            raise TextSummarizerError(e, logger) from e
+
+    def _save_all(self, tokenized_dataset: DatasetDict):
+        """
+        Handles saving locally (and to DVC) and/or to S3, based on config flags.
+        Returns all paths/URIs.
+        """
+        dataset_dir = None
+        dvc_dataset_dir = None
+        dataset_s3_uri = None
+        dvc_dataset_s3_uri = None
+
+        try:
+            # Local and DVC
+            if self.config.local_enabled:
+                dataset_dir = os.path.join(str(self.config.root_dir), self.config.dataset_subdir)
+                os.makedirs(dataset_dir, exist_ok=True)
+                tokenized_dataset.save_to_disk(Path(dataset_dir).as_posix())
+                logger.info(f"Saved tokenized dataset locally: {dataset_dir}")
+
+                # DVC-tracked local copy
+                dvc_dataset_dir = os.path.join(str(self.config.dvc_root_dir), self.config.dvc_dataset_subdir)
+                if os.path.exists(dvc_dataset_dir):
+                    shutil.rmtree(dvc_dataset_dir)
+                shutil.copytree(dataset_dir, dvc_dataset_dir)
+                logger.info(f"DVC dataset copy created: {dvc_dataset_dir}")
+
+            # S3 uploads
+            if self.config.s3_enabled and self.backup_handler:
+                with self.backup_handler as handler:
+                    if dataset_dir:
+                        dataset_s3_uri = handler.upload_folder(
+                            local_dir=Path(dataset_dir),
+                            s3_prefix=self.config.dataset_s3_key
+                        )
+                        logger.info(f"Uploaded dataset to S3: {dataset_s3_uri}")
+                    if dvc_dataset_dir:
+                        dvc_dataset_s3_uri = handler.upload_folder(
+                            local_dir=Path(dvc_dataset_dir),
+                            s3_prefix=self.config.dvc_dataset_s3_key
+                        )
+                        logger.info(f"Uploaded DVC dataset to S3: {dvc_dataset_s3_uri}")
+
+            return dataset_dir, dvc_dataset_dir, dataset_s3_uri, dvc_dataset_s3_uri
+
+        except Exception as e:
+            logger.info("Error during saving outputs (local/DVC/S3)")
+            raise TextSummarizerError(e, logger) from e
+
+    def run_transformation(self) -> DataTransformationArtifact:
+        """Pipeline for data transformation and artifact creation."""
+        try:
+            logger.info("Starting data transformation...")
+
+            dataset = self._load_data()
+            tokenized_dataset = self._tokenize_data(dataset)
+            dataset_dir, dvc_dataset_dir, dataset_s3_uri, dvc_dataset_s3_uri = self._save_all(tokenized_dataset)
+
+            artifact = DataTransformationArtifact(
+                dataset_dir=dataset_dir,
+                dvc_dataset_dir=dvc_dataset_dir,
+                dataset_s3_uri=dataset_s3_uri,
+                dvc_dataset_s3_uri=dvc_dataset_s3_uri,
+            )
+            logger.info(f"Data transformation complete: {artifact}")
+            return artifact
+
+        except Exception as e:
+            logger.info("Data transformation failed")
+            raise TextSummarizerError(e, logger) from e
+
+================================================================================
+# PY FILE: src\textsummarizer\components\model_evaluation.py
+================================================================================
+
+
+
+================================================================================
+# PY FILE: src\textsummarizer\components\model_prediction.py
+================================================================================
+
+
+
+================================================================================
+# PY FILE: src\textsummarizer\components\model_trainer.py
+================================================================================
+
+"""Model training component for text summarization pipeline."""
+import os
+import torch
+from transformers import (
+    AutoModelForSeq2SeqLM,
+    AutoTokenizer,
+    TrainingArguments,
+    Trainer,
+    DataCollatorForSeq2Seq,
+)
+from datasets import load_from_disk
+from typing import Optional
+from src.textsummarizer.entity.config_entity import ModelTrainerConfig
+from src.textsummarizer.dbhandler.base_handler import DBHandler
+from src.textsummarizer.exception.exception import TextSummarizerError
+from src.textsummarizer.logging import logger
+from src.textsummarizer.entity.artifact_entity import (
+    ModelTrainerArtifact,
+    DataTransformationArtifact,
+)
+
+class ModelTrainer:
+    """Orchestrates model training using Hugging Face Transformers."""
+
+    def __init__(
+        self,
+        config: ModelTrainerConfig,
+        artifact: DataTransformationArtifact,
+        backup_handler: Optional[DBHandler] = None,
+    ) -> None:
+        self.trainer_config = config
+        self.transformation_artifact = artifact
+
+    def train(self) -> None:
+        """Execute model training pipeline."""
+        try:
+            logger.info("Starting model training")
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            logger.info("Using device: %s", device)
+
+            # Load tokenizer and model
+            tokenizer = AutoTokenizer.from_pretrained(self.trainer_config.model_ckpt)
+            model = AutoModelForSeq2SeqLM.from_pretrained(
+                self.trainer_config.model_ckpt
+            ).to(device)
+            data_collator = DataCollatorForSeq2Seq(tokenizer, model=model)
+
+            # Validate and load dataset
+            dataset_dir = str(self.transformation_artifact.dataset_dir)
+            if not os.path.exists(dataset_dir):
+                raise FileNotFoundError(f"Directory {dataset_dir} not found")
+            dataset = load_from_disk(dataset_dir)
+
+            training_args = TrainingArguments(
+                output_dir=str(self.trainer_config.root_dir),
+                num_train_epochs=int(self.trainer_config.num_train_epochs),
+                warmup_steps=int(self.trainer_config.warmup_steps),
+                per_device_train_batch_size=int(self.trainer_config.per_device_train_batch_size),
+                per_device_eval_batch_size=int(self.trainer_config.per_device_eval_batch_size),
+                weight_decay=float(self.trainer_config.weight_decay),
+                logging_steps=int(self.trainer_config.logging_steps),
+                eval_strategy=str(self.trainer_config.eval_strategy),
+                eval_steps=int(self.trainer_config.eval_steps),
+                save_steps=int(self.trainer_config.save_steps),
+                gradient_accumulation_steps=int(self.trainer_config.gradient_accumulation_steps),
+                learning_rate=float(self.trainer_config.learning_rate),
+            )
+
+            # Set up Trainer
+            trainer = Trainer(
+                model=model,
+                args=training_args,
+                tokenizer=tokenizer,
+                data_collator=data_collator,
+                train_dataset=dataset["train"],
+                eval_dataset=dataset["validation"],
+            )
+
+            logger.info("Beginning training...")
+            trainer.train()
+            logger.info("Training completed")
+
+            # Save model and tokenizer
+            model_dir = os.path.join(str(self.trainer_config.root_dir), "pegasus-samsum-model")
+            tokenizer_dir = os.path.join(str(self.trainer_config.root_dir), "tokenizer")
+            logger.info("Saving model to %s", model_dir)
+            model.save_pretrained(model_dir)
+            logger.info("Saving tokenizer to %s", tokenizer_dir)
+            tokenizer.save_pretrained(tokenizer_dir)
+            logger.info("Model training successfully completed")
+        except Exception as e:
+            logger.info("Error during model training")
+            raise TextSummarizerError(e, logger) from e
+
+================================================================================
+# PY FILE: src\textsummarizer\config\__init__.py
+================================================================================
+
+
+
+================================================================================
+# PY FILE: src\textsummarizer\config\configuration.py
+================================================================================
+
+"""
+This module defines the ConfigurationManager, a central class for managing
+all project configurations from YAML files.
+"""
+import os
+from pathlib import Path
+
+from src.textsummarizer.constants.constants import (
+    ARTIFACTS_ROOT,
+    CONFIG_FILENAME,
+    CONFIG_ROOT,
+    DVC_RAW_SUBDIR,
+    DVC_ROOT,
+    INGEST_INGESTED_SUBDIR,
+    INGEST_RAW_SUBDIR,
+    INGEST_ROOT,
+    PARAMS_FILENAME,
+    TRANSFORM_ROOT,
+)
+from src.textsummarizer.entity.config_entity import (
+    DataIngestionConfig,
+    DataTransformationConfig,
+    ModelTrainerConfig,
+    S3HandlerConfig,
+)
+from src.textsummarizer.utils.core import read_yaml
+from src.textsummarizer.utils.timestamp import get_utc_timestamp
+from src.textsummarizer.logging import logger
+from src.textsummarizer.exception.exception import TextSummarizerError
+
+
+class ConfigurationManager:
+    """
+    Manages the loading and provision of all project configurations.
+
+    This class reads configuration files (config.yaml, params.yaml) and
+    provides methods to access structured configuration objects for different
+    pipeline components. It ensures that configurations are loaded once and
+    accessed consistently.
+    """
+
+    _global_timestamp: str = None
+
+    def __init__(self) -> None:
+        """
+        Initializes the ConfigurationManager by loading all necessary configs
+        and setting up artifact directories.
+
+        Raises:
+            TextSummarizerError: If initialization fails.
+        """
+        try:
+            logger.info("Initializing ConfigurationManager.")
+            self._init_artifacts()
+            self._load_configs()
+            logger.info("ConfigurationManager initialized successfully.")
+        except Exception as e:
+            logger.info("Error during ConfigurationManager initialization.")
+            raise TextSummarizerError(e, logger) from e
+
+    def _init_artifacts(self) -> None:
+        """
+        Initializes artifact directories with a consistent, cached timestamp.
+        This ensures all artifacts from a single run are stored together.
+
+        Raises:
+            TextSummarizerError: If artifact directory creation fails.
+        """
+        try:
+            if ConfigurationManager._global_timestamp is None:
+                # Generate a single timestamp for the entire run
+                ConfigurationManager._global_timestamp = get_utc_timestamp()
+                logger.info(
+                    f"Generated global timestamp: {ConfigurationManager._global_timestamp}"
+                )
+
+            timestamp = ConfigurationManager._global_timestamp
+            self.artifacts_root = Path(ARTIFACTS_ROOT) / timestamp
+            self.artifacts_root.mkdir(parents=True, exist_ok=True)
+            logger.info(f"Artifacts root directory set to: {self.artifacts_root}")
+        except Exception as e:
+            logger.info("Error initializing artifact directories.")
+            raise TextSummarizerError(e, logger) from e
+
+    def _load_configs(self) -> None:
+        """
+        Loads configuration files (config.yaml, params.yaml) into memory.
+
+        Raises:
+            TextSummarizerError: If configuration files cannot be read.
+        """
+        try:
+            logger.info("Loading configuration files.")
+            config_root = Path(CONFIG_ROOT)
+            config_filepath = config_root / CONFIG_FILENAME
+            params_filepath = config_root / PARAMS_FILENAME
+
+            self.config = read_yaml(config_filepath)
+            self.params = read_yaml(params_filepath)
+            logger.info("Configuration files loaded successfully.")
+        except Exception as e:
+            logger.info("Error loading configuration files.")
+            raise TextSummarizerError(e, logger) from e
+
+    def get_data_ingestion_config(self) -> DataIngestionConfig:
+        """
+        Creates and returns the DataIngestionConfig.
+
+        This method extracts data ingestion settings from the loaded
+        configurations and constructs a DataIngestionConfig object.
+
+        Raises:
+            TextSummarizerError: If the configuration is invalid or missing.
+
+        Returns:
+            DataIngestionConfig: A dataclass object with data ingestion settings.
+        """
+        try:
+            logger.info("Creating data ingestion configuration.")
+            ingestion_config = self.config.data_ingestion
+            data_backup_config = self.config.data_backup
+
+            # Define paths for data ingestion artifacts
+            root_dir = self.artifacts_root / INGEST_ROOT
+            raw_filepath = root_dir / INGEST_RAW_SUBDIR / ingestion_config.raw_data_filename
+            ingested_dir = root_dir / INGEST_INGESTED_SUBDIR
+            dvc_ingested_dir = Path(DVC_ROOT) / INGEST_INGESTED_SUBDIR
+
+            # Create the configuration object
+            data_ingestion_config = DataIngestionConfig(
+                root_dir=root_dir,
+                source_url=ingestion_config.source_URL,
+                raw_filepath=raw_filepath,
+                ingested_dir=ingested_dir,
+                dataset_name=ingestion_config.dataset_name,
+                dvc_ingested_dir=dvc_ingested_dir,
+                local_enabled=data_backup_config.local_enabled,
+                s3_enabled=data_backup_config.s3_enabled,
+            )
+            logger.info(
+                f"Data ingestion configuration created: {data_ingestion_config}"
+            )
+            return data_ingestion_config
+        except Exception as e:
+            logger.info("Error creating data ingestion configuration.")
+            raise TextSummarizerError(e, logger) from e
+
+    def get_s3_handler_config(self) -> S3HandlerConfig:
+        """
+        Creates and returns the S3HandlerConfig.
+
+        Raises:
+            TextSummarizerError: If the configuration is invalid or missing.
+
+        Returns:
+            S3HandlerConfig: Configuration object for the S3 handler.
+        """
+        try:
+            logger.info("Creating S3 handler configuration.")
+            s3_config = self.config.s3_handler
+            root_dir = self.artifacts_root / "s3_handler"
+            aws_region = os.getenv("AWS_REGION")
+
+            s3_handler_config = S3HandlerConfig(
+                root_dir=root_dir,
+                bucket_name=s3_config.bucket_name,
+                aws_region=aws_region,
+            )
+            logger.info(f"S3 handler configuration created: {s3_handler_config}")
+            return s3_handler_config
+        except Exception as e:
+            logger.info("Error creating S3 handler configuration.")
+            raise TextSummarizerError(e, logger) from e
+
+    def get_data_transformation_config(self) -> DataTransformationConfig:
+        """
+        Creates and returns the DataTransformationConfig.
+
+        Raises:
+            TextSummarizerError: If the configuration is invalid or missing.
+
+        Returns:
+            DataTransformationConfig: Configuration for the data transformation component.
+        """
+        try:
+            logger.info("Creating data transformation configuration.")
+            config = self.config.data_transformation
+            params = self.params.data_transformation
+            root_dir = self.artifacts_root / TRANSFORM_ROOT
+            data_backup_config = self.config.data_backup
+
+            data_transformation_config = DataTransformationConfig(
+                root_dir=root_dir,
+                # Tokenizer settings
+                tokenizer_name=params.tokenizer.pretrained_model_name,
+                max_input_length=params.tokenizer.max_input_length,
+                max_target_length=params.tokenizer.max_target_length,
+                # Data split settings
+                train_size=params.data_split.train_size,
+                val_size=params.data_split.val_size,
+                test_size=params.data_split.test_size,
+                random_state=params.data_split.random_state,
+                stratify=params.data_split.stratify,
+                local_enabled=data_backup_config.local_enabled,
+                s3_enabled=data_backup_config.s3_enabled,
+            )
+            logger.info(
+                f"Data transformation config created: {data_transformation_config}"
+            )
+            return data_transformation_config
+
+        except Exception as e:
+            logger.info("Error creating data transformation configuration.")
+            raise TextSummarizerError(e, logger) from e
+
+    def get_model_trainer_config(self) -> ModelTrainerConfig:
+        """
+        Creates and returns the ModelTrainerConfig.
+
+        Raises:
+            TextSummarizerError: If the configuration is invalid or missing.
+
+        Returns:
+            ModelTrainerConfig: Configuration for the model trainer component.
+        """
+        try:
+            logger.info("Creating model trainer configuration.")
+            config = self.config.model_trainer
+            params = self.params.model_trainer.training_arguments
+            root_dir = self.artifacts_root / "model_trainer"
+
+            model_trainer_config = ModelTrainerConfig(
+                root_dir=root_dir,
+                model_ckpt=config.model_ckpt,
+                num_train_epochs=params.num_train_epochs,
+                warmup_steps=params.warmup_steps,
+                per_device_train_batch_size=params.per_device_train_batch_size,
+                per_device_eval_batch_size=params.per_device_eval_batch_size,
+                weight_decay=params.weight_decay,
+                logging_steps=params.logging_steps,
+                eval_strategy=params.eval_strategy,
+                eval_steps=params.eval_steps,
+                save_steps=params.save_steps,
+                gradient_accumulation_steps=params.gradient_accumulation_steps,
+                learning_rate=params.learning_rate,
+                fp16=params.fp16,
+            )
+            logger.info(f"Model trainer configuration created: {model_trainer_config}")
+            return model_trainer_config
+        except Exception as e:
+            logger.info("Error creating model trainer configuration.")
+            raise TextSummarizerError(e, logger) from e
+
+================================================================================
+# PY FILE: src\textsummarizer\constants\__init__.py
+================================================================================
+
+
+
+================================================================================
+# PY FILE: src\textsummarizer\constants\constants.py
+================================================================================
+
+"""
+This module defines centralized, project-wide constants to ensure consistency
+and avoid hardcoded values across the application. It includes paths for
+configuration, logging, artifacts, and various pipeline stages.
+"""
+# ==============================================================================
+# CONFIGURATION CONSTANTS
+# ==============================================================================
+# Directories and filenames for configuration files
+CONFIG_ROOT = "config"
+CONFIG_FILENAME = "config.yaml"
+PARAMS_FILENAME = "params.yaml"
+SCHEMA_FILENAME = "schema.yaml"
+TEMPLATES_FILENAME = "templates.yaml"
+
+
+# ==============================================================================
+# LOGGING CONSTANTS
+# ==============================================================================
+# Root directory for storing log files
+LOGS_ROOT = "logs"
+
+
+# ==============================================================================
+# ARTIFACTS AND DATA HANDLING CONSTANTS
+# ==============================================================================
+# Root directory for all generated artifacts
+ARTIFACTS_ROOT = "artifacts"
+
+# Constants for database handlers (e.g., PostgreSQL)
+POSTGRES_HANDLER_ROOT = "mongo_handler"
+S3_HANDLER_ROOT = "s3_handler"
+
+# Constants for data ingestion process
+INGEST_ROOT = "data_ingestion"
+INGEST_RAW_SUBDIR = "raw_data"
+INGEST_INGESTED_SUBDIR = "ingested_data"
+
+# Constants for DVC-managed data directories
+DVC_ROOT = "data"
+DVC_RAW_SUBDIR = "raw"
+DVC_VALIDATED_SUBDIR = "validated"
+DVC_TRANSFORMED_SUBDIR = "transformed"
+
+
+# ==============================================================================
+# DATA VALIDATION CONSTANTS
+# ==============================================================================
+# Directories for data validation outputs
+VALID_ROOT = "data_validation"
+VALID_VALIDATED_SUBDIR = "validated"
+VALID_REPORTS_SUBDIR = "reports"
+
+
+# ==============================================================================
+# DATASET LABELS
+# ==============================================================================
+# Standard labels for dataset splits (train, validation, test)
+X_TRAIN_LABEL = "X_train"
+Y_TRAIN_LABEL = "y_train"
+X_VAL_LABEL = "X_val"
+Y_VAL_LABEL = "y_val"
+X_TEST_LABEL = "X_test"
+Y_TEST_LABEL = "y_test"
+TRAIN_LABEL = "train"
+VAL_LABEL = "val"
+TEST_LABEL = "test"
+
+
+# ==============================================================================
+# DATA TRANSFORMATION CONSTANTS
+# ==============================================================================
+# Directories for data transformation artifacts
+TRANSFORM_ROOT = "data_transformation"
+TRANSFORM_TRAIN_SUBDIR = "train"
+TRANSFORM_TEST_SUBDIR = "test"
+TRANSFORM_VAL_SUBDIR = "val"
+TRANSFORM_PROCESSOR_SUBDIR = "data_processor"
+
+
+# ==============================================================================
+# MODEL TRAINING CONSTANTS
+# ==============================================================================
+# Directories for model training artifacts
+TRAINER_ROOT = "model_trainer"
+TRAINER_MODEL_SUBDIR = "model"
+TRAINER_REPORTS_SUBDIR = "reports"
+TRAINER_INFERENCE_SUBDIR = "inference_model"
+
+
+# ==============================================================================
+# INFERENCE AND EVALUATION CONSTANTS
+# ==============================================================================
+# Root directory for inference models
+INFERENCE_MODEL_ROOT = "inference_model"
+
+# Directories for model evaluation artifacts
+EVALUATION_ROOT = "model_evaluation"
+EVALUATION_REPORT_SUBDIR = "reports"
+
+# Root directory for storing predictions
+PREDICTION_ROOT = "predictions"

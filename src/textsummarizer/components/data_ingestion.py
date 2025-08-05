@@ -81,17 +81,22 @@ class DataIngestion:
             if self.s3_enabled and self.backup_handler:
                 logger.info("Extracting ZIP in S3: %s -> %s", self.ingestion_config.raw_s3_key, self.ingestion_config.ingested_s3_key)
                 with self.backup_handler as handler:
-                    paths["raw_s3_uri"] = handler.upload_file(
-                        conf.raw_filepath, conf.raw_s3_key
+                    ingested_s3_uri = handler.extract_and_stream_zip_to_s3(
+                        source_zip_s3_key=self.ingestion_config.raw_s3_key,
+                        destination_s3_key=self.ingestion_config.ingested_s3_key,
                     )
-                    paths["dvc_raw_s3_uri"] = handler.upload_file(
-                        conf.dvc_raw_filepath, conf.dvc_raw_s3_key
-                    )
-                    paths["ingested_s3_uri"] = handler.stream_csv(
-                        df, conf.ingested_s3_key
-                    )
+                    
+                    results["ingested_s3_uri"] = posixpath.join(ingested_s3_uri, self.ingestion_config.dataset_name)
 
-            return paths
+                    # DVC ingested S3
+                    if self.ingestion_config.dvc_ingested_s3_key:
+                        dvc_ingested_s3_uri = handler.upload_folder(
+                            local_dir=self.ingestion_config.dvc_ingested_dir,
+                            s3_prefix=self.ingestion_config.dvc_ingested_s3_key,
+                        )
+                        results["dvc_ingested_s3_uri"] =  posixpath.join(dvc_ingested_s3_uri, self.ingestion_config.dataset_name)
+
+            return ConfigBox(results)
 
         except Exception as e:
             logger.info("Error during ZIP extraction")

@@ -1,0 +1,348 @@
+--- CODE DUMP | PART 1 of 5 ---
+
+
+================================================================================
+# PY FILE: app.py
+================================================================================
+
+from fastapi import FastAPI
+
+app = FastAPI()
+
+@app.get("/")
+def root():
+    return {"message": "Welcome to textsummarizer!"}
+
+================================================================================
+# PY FILE: app\celery_worker.py
+================================================================================
+
+from celery import Celery
+
+celery_app = Celery(__name__, broker='redis://localhost:6379/0')
+
+================================================================================
+# PY FILE: debug.py
+================================================================================
+
+from src.textsummarizer.pipeline.training_pipeline import TrainingPipeline
+from src.textsummarizer.exception.exception import TextSummarizerError
+
+try:
+    pipeline = TrainingPipeline()
+    pipeline.run_pipeline()
+except TextSummarizerError as e:
+    print(f"An error occurred: {e}")
+except Exception as e:
+    print(f"An unexpected error occurred: {e}")
+
+================================================================================
+# PY FILE: project_dump.py
+================================================================================
+
+import os
+import math
+
+EXCLUDE_DIRS = {'.venv', 'venv', '__pycache__', '.github', '.git', '.idea', '.vscode', 'build', 'dist', '.mypy_cache'}
+INCLUDE_YAML_FILES = {'config.yaml', 'params.yaml', 'schema.yaml', 'templates.yaml'}
+BASE_OUTPUT_FILE = "project_code_dump_part"
+SUMMARY_FILE = "project_code_dump_index.txt"
+STRUCTURE_FILE = "project_structure.txt"
+
+
+def is_valid_directory(dirname):
+    return not any(part in EXCLUDE_DIRS for part in dirname.split(os.sep))
+
+
+def print_directory_tree(start_path: str, indent: str = "", exclude_dirs=None, out_lines=None) -> list:
+    if exclude_dirs is None:
+        exclude_dirs = EXCLUDE_DIRS
+    if out_lines is None:
+        out_lines = []
+
+    try:
+        items = sorted(os.listdir(start_path))
+    except PermissionError:
+        return out_lines
+
+    for item in items:
+        item_path = os.path.join(start_path, item)
+        if os.path.isdir(item_path):
+            if item in exclude_dirs:
+                continue
+            out_lines.append(f"{indent}📁 {item}/")
+            print_directory_tree(item_path, indent + "    ", exclude_dirs, out_lines)
+        else:
+            out_lines.append(f"{indent}📄 {item}")
+    return out_lines
+
+
+def list_target_files(root_dir):
+    py_files = []
+    yaml_files = []
+
+    for dirpath, dirnames, filenames in os.walk(root_dir):
+        dirnames[:] = [d for d in dirnames if is_valid_directory(os.path.join(dirpath, d))]
+        for filename in filenames:
+            full_path = os.path.join(dirpath, filename)
+            rel_path = os.path.relpath(full_path, root_dir)
+
+            if filename.endswith('.py'):
+                py_files.append((rel_path, full_path))
+            elif filename in INCLUDE_YAML_FILES:
+                yaml_files.append((rel_path, full_path))
+
+    return sorted(py_files), sorted(yaml_files)
+
+
+def chunk_list(data, num_chunks):
+    chunk_size = math.ceil(len(data) / num_chunks)
+    return [data[i:i + chunk_size] for i in range(0, len(data), chunk_size)]
+
+
+def dump_project_code_in_parts(root_dir='.', num_parts=1):
+    py_files, yaml_files = list_target_files(root_dir)
+    tree_lines = print_directory_tree(root_dir, out_lines=[])
+    total_files = py_files + yaml_files
+
+    if not total_files:
+        print("❌ No .py or relevant .yaml files found.")
+        return
+
+    # Save project structure once
+    with open(STRUCTURE_FILE, 'w', encoding='utf-8') as struct_file:
+        struct_file.write(f"📦 Project Structure of: {os.path.abspath(root_dir)}\n\n")
+        struct_file.write("\n".join(tree_lines))
+    print(f"✅ Project structure saved to: {os.path.abspath(STRUCTURE_FILE)}")
+
+    file_chunks = chunk_list(total_files, num_parts)
+    summary_lines = []
+
+    for i, chunk in enumerate(file_chunks, start=1):
+        part_filename = f"{BASE_OUTPUT_FILE}{i}.txt"
+        with open(part_filename, 'w', encoding='utf-8') as out_file:
+            out_file.write(f"--- CODE DUMP | PART {i} of {num_parts} ---\n\n")
+
+            for rel_path, full_path in chunk:
+                summary_lines.append(f"{part_filename}: {rel_path}")
+                out_file.write(f"\n{'=' * 80}\n")
+                file_type = "PY FILE" if rel_path.endswith('.py') else "YAML FILE"
+                out_file.write(f"# {file_type}: {rel_path}\n")
+                out_file.write(f"{'=' * 80}\n\n")
+                try:
+                    with open(full_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                        out_file.write(content.strip() + "\n")
+                except Exception as e:
+                    out_file.write(f"Error reading {rel_path}: {e}\n")
+
+        print(f"✅ Dumped part {i} to: {os.path.abspath(part_filename)}")
+
+    # Write summary file
+    with open(SUMMARY_FILE, 'w', encoding='utf-8') as f:
+        f.write("📄 File-to-Part Mapping\n\n")
+        for line in summary_lines:
+            f.write(line + "\n")
+
+    print(f"\n📝 Summary index saved to: {os.path.abspath(SUMMARY_FILE)}")
+
+
+if __name__ == "__main__":
+    ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+    try:
+        num_parts = int(input("Enter number of parts to split the dump into: ").strip())
+        if num_parts < 1:
+            raise ValueError
+    except ValueError:
+        print("❌ Invalid input. Please enter a positive integer.")
+    else:
+        dump_project_code_in_parts(ROOT_DIR, num_parts)
+
+================================================================================
+# PY FILE: setup.py
+================================================================================
+
+import setuptools
+
+with open("README.md", "r", encoding="utf-8") as f:
+    long_description = f.read()
+
+__version__ = "0.0.1"
+REPO_NAME = "text-summarizer"
+AUTHOR_USER_NAME = "megokul"
+SRC_REPO = "textsummarizer"
+AUTHOR_EMAIL = "gokul.meganathan@outlook.com"
+
+setuptools.setup(
+    name=SRC_REPO,
+    version=__version__,
+    author=AUTHOR_USER_NAME,
+    author_email=AUTHOR_EMAIL,
+    description="A small python package for NLP app",
+    long_description=long_description,
+    long_description_content_type="text/markdown",
+    url=f"https://github.com/{AUTHOR_USER_NAME}/{REPO_NAME}",
+    project_urls={
+        "Bug Tracker": f"https://github.com/{AUTHOR_USER_NAME}/{REPO_NAME}/issues",
+    },
+    package_dir={"": "src"},
+    packages=setuptools.find_packages(where="src"),
+    install_requires=[
+        "transformers[sentencepiece]==4.30.2",
+        "sentencepiece==0.1.99",
+        "datasets==2.14.4",
+        "sacrebleu==2.3.1",
+        "rouge_score==0.1.2",
+        "py7zr==0.20.8",
+        "torch==2.0.1",
+        "pandas==2.0.3",
+        "numpy==1.25.2",
+        "ensure==1.0.4",
+        "python-box==7.1.1",
+        "PyYAML==6.0.1",
+        "python-dotenv==1.0.0",
+        "psycopg2-binary==2.9.7",
+        "mlflow==2.6.0",
+        "dagshub==0.3.2",
+        "flask==2.3.2",
+        "gunicorn==21.2.0",
+        "huggingface_hub[hf_xet]",
+    ],
+)
+
+================================================================================
+# PY FILE: src\textsummarizer\__init__.py
+================================================================================
+
+
+
+================================================================================
+# PY FILE: src\textsummarizer\components\__init__.py
+================================================================================
+
+
+
+================================================================================
+# PY FILE: src\textsummarizer\components\data_ingestion.py
+================================================================================
+
+import zipfile
+import shutil
+from pathlib import Path
+from typing import Optional
+
+from src.textsummarizer.entity.artifact_entity import DataIngestionArtifact
+from src.textsummarizer.exception.exception import TextSummarizerError
+from src.textsummarizer.logging import logger
+from src.textsummarizer.dbhandler.base_handler import DBHandler
+from src.textsummarizer.utils.core import download_file
+from box import ConfigBox
+
+class DataIngestion:
+    """Orchestrates data downloading, extraction, and persistence."""
+
+    def __init__(
+        self,
+        config,
+        backup_handler: Optional[DBHandler] = None,
+    ) -> None:
+        self.ingestion_config = config
+        self.backup_handler = backup_handler
+        self.local_enabled = self.ingestion_config.local_enabled
+        self.s3_enabled = self.ingestion_config.s3_enabled
+
+    def _download_data(self) -> dict:
+        results = {
+            "raw_filepath": None,
+            "raw_s3_uri": None,
+        }
+        url = self.ingestion_config.source_url
+
+        if self.local_enabled:
+            logger.info("Downloading ZIP locally to: %s", self.ingestion_config.raw_filepath)
+            download_file(
+                url=url,
+                download_path=self.ingestion_config.raw_filepath,
+            )
+            results["raw_filepath"] = self.ingestion_config.raw_filepath
+
+        if self.s3_enabled and self.backup_handler:
+            logger.info("Streaming ZIP to S3: %s", self.ingestion_config.raw_s3_key)
+            with self.backup_handler as handler:
+                s3_uri = handler.stream_url_to_s3(
+                    url=url,
+                    s3_key=self.ingestion_config.raw_s3_key,
+                )
+            results["raw_s3_uri"] = s3_uri
+
+        return ConfigBox(results)
+
+    def _extract_zip(self) -> dict:
+        results = {
+            "ingested_filepath": None,
+            "dvc_ingested_filepath": None,
+            "ingested_s3_uri": None,
+            "dvc_ingested_s3_uri": None,
+        }
+        try:
+            # Local extraction
+            if self.local_enabled:
+                zip_path = self.ingestion_config.raw_filepath
+                ingested_dir = self.ingestion_config.ingested_dir
+                ingested_dir.mkdir(parents=True, exist_ok=True)
+                logger.info("Extracting ZIP locally to: %s", ingested_dir)
+                with zipfile.ZipFile(zip_path, "r") as zip_ref:
+                    zip_ref.extractall(ingested_dir)
+                logger.info("Extraction complete.")
+                results["ingested_filepath"] = ingested_dir / self.ingestion_config.dataset_name
+
+                # DVC-tracked ingested data
+                dvc_ingested = self.ingestion_config.dvc_ingested_dir
+                if dvc_ingested.exists():
+                    shutil.rmtree(dvc_ingested)
+                shutil.copytree(ingested_dir, dvc_ingested)
+                results["dvc_ingested_filepath"] = dvc_ingested / self.ingestion_config.dataset_name
+
+            # S3 extraction
+            if self.s3_enabled and self.backup_handler:
+                logger.info("Extracting ZIP in S3: %s -> %s", self.ingestion_config.raw_s3_key, self.ingestion_config.ingested_s3_key)
+                with self.backup_handler as handler:
+                    ingested_s3_uri = handler.extract_and_stream_zip_to_s3(
+                        source_zip_s3_key=self.ingestion_config.raw_s3_key,
+                        destination_s3_key=self.ingestion_config.ingested_s3_key,
+                    )
+                    results["ingested_s3_uri"] = ingested_s3_uri
+
+                    # DVC ingested S3
+                    if self.ingestion_config.dvc_ingested_s3_key:
+                        dvc_ingested_s3_uri = handler.upload_folder(
+                            local_dir=self.ingestion_config.dvc_ingested_dir,
+                            s3_prefix=self.ingestion_config.dvc_ingested_s3_key,
+                        )
+                        results["dvc_ingested_s3_uri"] = dvc_ingested_s3_uri
+
+            return ConfigBox(results)
+
+        except Exception as e:
+            logger.info("Error during ZIP extraction")
+            raise TextSummarizerError(e, logger) from e
+
+    def run_ingestion(self) -> DataIngestionArtifact:
+        try:
+            logger.info("Starting data ingestion...")
+            download_info = self._download_data()
+            extract_info = self._extract_zip()
+            artifact = DataIngestionArtifact(
+                raw_filepath=Path(download_info.raw_filepath).absolute() if download_info.raw_filepath else None,
+                raw_s3_uri=download_info.raw_s3_uri,
+                ingested_filepath=Path(extract_info.ingested_filepath).absolute() if extract_info.ingested_filepath else None,
+                dvc_ingested_filepath=Path(extract_info.dvc_ingested_filepath).absolute() if extract_info.dvc_ingested_filepath else None,
+                ingested_s3_uri=extract_info.ingested_s3_uri,
+                dvc_ingested_s3_uri=extract_info.dvc_ingested_s3_uri,
+            )
+            logger.info(f"Data ingestion complete: {artifact}")
+            return artifact
+
+        except Exception as e:
+            logger.info("Data ingestion pipeline failed")
+            raise TextSummarizerError(e, logger) from e

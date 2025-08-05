@@ -154,6 +154,7 @@ class DataTransformationConfig:
 
 
 
+
 @dataclass
 class ModelTrainerConfig:
     root_dir: Path
