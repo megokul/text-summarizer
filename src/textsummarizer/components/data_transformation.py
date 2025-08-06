@@ -25,7 +25,7 @@ class DataTransformation:
     def _load_data(self) -> DatasetDict:
         """
         Loads dataset from S3 or local disk depending on config flags.
-        Assumes the saved format is Hugging Face `DatasetDict` with splits (train, val, test).
+        Assumes the saved format is Hugging Face DatasetDict with splits (train, val, test).
         """
         try:
             # Load from local path

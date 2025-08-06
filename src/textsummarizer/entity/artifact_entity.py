@@ -59,17 +59,36 @@ class DataTransformationArtifact:
             f"  - DVC Tokenized S3 URI:          '{dvc_tokenized_s3_str}'\n"
         )
 
+
 @dataclass(frozen=True)
 class ModelTrainerArtifact:
-    model_filepath: Path | None = None
+    trained_model_dir: Path | None = None
+    tokenizer_dir: Path | None = None
+    final_model_dir: Path | None = None
+    final_tokenizer_dir: Path | None = None
     model_s3_uri: str | None = None
+    tokenizer_s3_uri: str | None = None
+    final_model_s3_uri: str | None = None
+    final_tokenizer_s3_uri: str | None = None
 
     def __repr__(self) -> str:
-        def fmt(p): return p.as_posix() if isinstance(p, Path) else "None"
-        def fmt_uri(u): return u if u else "None"
+        model_local_str = self.trained_model_dir.as_posix() if self.trained_model_dir else "None"
+        tokenizer_local_str = self.tokenizer_dir.as_posix() if self.tokenizer_dir else "None"
+        final_model_local_str = self.final_model_dir.as_posix() if self.final_model_dir else "None"
+        final_tokenizer_local_str = self.final_tokenizer_dir.as_posix() if self.final_tokenizer_dir else "None"
+        model_s3_str = self.model_s3_uri if self.model_s3_uri else "None"
+        tokenizer_s3_str = self.tokenizer_s3_uri if self.tokenizer_s3_uri else "None"
+        final_model_s3_str = self.final_model_s3_uri if self.final_model_s3_uri else "None"
+        final_tokenizer_s3_str = self.final_tokenizer_s3_uri if self.final_tokenizer_s3_uri else "None"
 
         return (
             "\nModel Trainer Artifact:\n"
-            f"  - Model Filepath:        '{fmt(self.model_filepath)}'\n"
-            f"  - Model S3 URI:          '{fmt_uri(self.model_s3_uri)}'\n"
+            f"  - Trained Model Local Path:          '{model_local_str}'\n"
+            f"  - Tokenizer Local Path:              '{tokenizer_local_str}'\n"
+            f"  - Final Model Local Path:            '{final_model_local_str}'\n"
+            f"  - Final Tokenizer Local Path:        '{final_tokenizer_local_str}'\n"
+            f"  - Model S3 URI:                      '{model_s3_str}'\n"
+            f"  - Tokenizer S3 URI:                  '{tokenizer_s3_str}'\n"
+            f"  - Final Model S3 URI:                '{final_model_s3_str}'\n"
+            f"  - Final Tokenizer S3 URI:            '{final_tokenizer_s3_str}'\n"
         )

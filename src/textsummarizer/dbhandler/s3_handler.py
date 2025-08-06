@@ -102,7 +102,7 @@ class S3Handler(DBHandler):
             logger.info("Directory sync to S3 failed.")
             raise TextSummarizerError(e, logger) from e
 
-    def upload_folder(self, local_dir: Path, s3_prefix: str) -> str:
+    def upload_dir(self, local_dir: Path, s3_prefix: str) -> str:
         self.sync_directory(local_dir, s3_prefix)
         return f"s3://{self.s3_config.bucket_name}/{s3_prefix}"
 

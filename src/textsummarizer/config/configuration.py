@@ -14,6 +14,11 @@ from src.textsummarizer.constants.constants import (
     TRANSFORM_ROOT,
     TRANSFORM_TOKENIZED_SUBDIR,
     TRAINER_ROOT,
+    TRAINER_MODEL_SUBDIR,
+    TRAINER_TOKENIZER_SUBDIR,
+    FINAL_MODEL_ROOT,
+    FINAL_MODEL_SUBDIR,
+    FINAL_TOKENIZER_SUBDIR,
 )
 from src.textsummarizer.entity.config_entity import (
     DataIngestionConfig,
@@ -136,8 +141,8 @@ class ConfigurationManager:
         try:
             params = self.params.data_transformation
             root_dir = self.artifacts_root / TRANSFORM_ROOT
-            tokenized_dataset_dir=root_dir / TRANSFORM_TOKENIZED_SUBDIR
-            dvc_tokenized_dataset_dir=Path(DVC_ROOT) / TRANSFORM_TOKENIZED_SUBDIR
+            tokenized_dataset_dir = root_dir / TRANSFORM_TOKENIZED_SUBDIR
+            dvc_tokenized_dataset_dir = Path(DVC_ROOT) / TRANSFORM_TOKENIZED_SUBDIR
             data_backup_config = self.config.data_backup
 
             data_transformation_config = DataTransformationConfig(
@@ -161,15 +166,16 @@ class ConfigurationManager:
 
     def get_model_trainer_config(self) -> ModelTrainerConfig:
         config = self.config.model_trainer
-        ingestion_config = self.config.data_ingestion
         params = self.params.model_trainer.training_arguments
         root_dir = self.artifacts_root / TRAINER_ROOT
-        data_path = root_dir / TRANSFORM_ROOT / ingestion_config.dataset_name
         data_backup_config = self.config.data_backup
+        final_model_dir = Path(FINAL_MODEL_ROOT) / FINAL_MODEL_SUBDIR
+        final_tokenizer_dir = Path(FINAL_MODEL_ROOT) / FINAL_TOKENIZER_SUBDIR
+        model_dir = root_dir / TRAINER_MODEL_SUBDIR
+        tokenizer_dir = root_dir / TRAINER_TOKENIZER_SUBDIR
 
         model_trainer_config = ModelTrainerConfig(
             root_dir=root_dir,
-            data_path=data_path,
             model_ckpt=config.model_ckpt,
             num_train_epochs=params.num_train_epochs,
             warmup_steps=params.warmup_steps,
@@ -184,6 +190,10 @@ class ConfigurationManager:
             gradient_accumulation_steps=params.gradient_accumulation_steps,
             local_enabled=data_backup_config.local_enabled,
             s3_enabled=data_backup_config.s3_enabled,
+            final_model_dir=final_model_dir,
+            final_tokenizer_dir=final_tokenizer_dir,
+            model_dir=model_dir,
+            tokenizer_dir=tokenizer_dir,
         )
 
         return model_trainer_config

@@ -10,11 +10,8 @@ class DataIngestionConfig:
     dvc_raw_filepath: Path
     ingested_dir: Path
     dvc_ingested_dir: Path
-    ingested_dir: Path
-    dvc_ingested_dir: Path
     local_enabled: bool
     s3_enabled: bool
-    dataset_name: str
     dataset_name: str
 
     def __post_init__(self) -> None:
@@ -22,8 +19,6 @@ class DataIngestionConfig:
         self.root_dir = Path(self.root_dir)
         self.raw_filepath = Path(self.raw_filepath)
         self.dvc_raw_filepath = Path(self.dvc_raw_filepath)
-        self.ingested_dir = Path(self.ingested_dir)
-        self.dvc_ingested_dir = Path(self.dvc_ingested_dir)
         self.ingested_dir = Path(self.ingested_dir)
         self.dvc_ingested_dir = Path(self.dvc_ingested_dir)
 
@@ -42,12 +37,9 @@ class DataIngestionConfig:
         """Generate the S3 key for the ingested data file."""
         return self.ingested_dir.as_posix()
 
-        return self.ingested_dir.as_posix()
-
     @property
     def dvc_ingested_s3_key(self) -> str:
         """Generate the S3 key for the DVC ingested data file."""
-        return self.dvc_ingested_dir.as_posix()
         return self.dvc_ingested_dir.as_posix()
 
     def __repr__(self) -> str:
@@ -60,15 +52,12 @@ class DataIngestionConfig:
             f"  - DVC Raw Data Path:    {self.dvc_raw_filepath}",
             f"  - Ingested Data Path:   {self.ingested_dir}",
             f"  - DVC Ingested Path:    {self.dvc_ingested_dir}",
-            f"  - Ingested Data Path:   {self.ingested_dir}",
-            f"  - DVC Ingested Path:    {self.dvc_ingested_dir}",
             f"  - Local Save Enabled:   {self.local_enabled}",
             f"  - S3 Upload Enabled:    {self.s3_enabled}",
             f"  - Raw S3 Key:           {self.raw_s3_key}",
             f"  - DVC Raw S3 Key:       {self.dvc_raw_s3_key}",
             f"  - Ingested S3 Key:      {self.ingested_s3_key}",
             f"  - DVC Ingested S3 Key:  {self.dvc_ingested_s3_key}",
-            f"  - Dataset Name:         {self.dataset_name}",
             f"  - Dataset Name:         {self.dataset_name}",
         ]
         return "\n".join(parts)
@@ -101,16 +90,10 @@ class DataTransformationConfig:
     tokenized_dataset_dir: Path
     dvc_tokenized_dataset_dir: Path
 
-    tokenized_dataset_dir: Path
-    dvc_tokenized_dataset_dir: Path
-
-    local_enabled: bool
-    s3_enabled: bool
     local_enabled: bool
     s3_enabled: bool
 
     def __post_init__(self) -> None:
-        """Ensure all path-like attributes are Path objects."""
         """Ensure all path-like attributes are Path objects."""
         self.root_dir = Path(self.root_dir)
         self.tokenized_dataset_dir = Path(self.tokenized_dataset_dir)
@@ -139,20 +122,8 @@ class DataTransformationConfig:
             f"  - DVC Tokenized Dataset S3 Key: {self.dvc_tokenized_dataset_s3_key}",
             f"  - Local Save Enabled:           {self.local_enabled}",
             f"  - S3 Upload Enabled:            {self.s3_enabled}",
-            f"  - Root Dir:                     {self.root_dir}",
-            f"  - Tokenizer Name:               {self.tokenizer_name}",
-            f"  - Max Input Length:             {self.max_input_length}",
-            f"  - Max Target Length:            {self.max_target_length}",
-            f"  - Tokenized Data Dir:           {self.tokenized_dataset_dir}",
-            f"  - DVC Tokenized Data Dir:       {self.dvc_tokenized_dataset_dir}",
-            f"  - Tokenized Dataset S3 Key:     {self.tokenized_dataset_s3_key}",
-            f"  - DVC Tokenized Dataset S3 Key: {self.dvc_tokenized_dataset_s3_key}",
-            f"  - Local Save Enabled:           {self.local_enabled}",
-            f"  - S3 Upload Enabled:            {self.s3_enabled}",
         ]
         return "\n".join(parts)
-
-
 
 
 @dataclass

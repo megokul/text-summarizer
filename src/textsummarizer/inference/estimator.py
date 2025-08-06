@@ -20,3 +20,4 @@ class SummarizerModel:
                 **inputs, num_beams=num_beams, max_length=max_length, early_stopping=True
             )
         return self.tokenizer.decode(summary_ids[0], skip_special_tokens=True)
+

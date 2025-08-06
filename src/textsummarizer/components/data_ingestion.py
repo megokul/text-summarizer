@@ -85,16 +85,16 @@ class DataIngestion:
                         source_zip_s3_key=self.ingestion_config.raw_s3_key,
                         destination_s3_key=self.ingestion_config.ingested_s3_key,
                     )
-                    
+
                     results["ingested_s3_uri"] = posixpath.join(ingested_s3_uri, self.ingestion_config.dataset_name)
 
                     # DVC ingested S3
                     if self.ingestion_config.dvc_ingested_s3_key:
-                        dvc_ingested_s3_uri = handler.upload_folder(
+                        dvc_ingested_s3_uri = handler.upload_dir(
                             local_dir=self.ingestion_config.dvc_ingested_dir,
                             s3_prefix=self.ingestion_config.dvc_ingested_s3_key,
                         )
-                        results["dvc_ingested_s3_uri"] =  posixpath.join(dvc_ingested_s3_uri, self.ingestion_config.dataset_name)
+                        results["dvc_ingested_s3_uri"] = posixpath.join(dvc_ingested_s3_uri, self.ingestion_config.dataset_name)
 
             return ConfigBox(results)
 
