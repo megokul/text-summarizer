@@ -15,7 +15,7 @@ from src.textsummarizer.logging import logger
 from src.textsummarizer.components.data_ingestion import DataIngestion
 from src.textsummarizer.components.data_transformation import DataTransformation
 from src.textsummarizer.components.model_trainer import ModelTrainer
-# from src.textsummarizer.components.model_evaluation import ModelEvaluation
+from src.textsummarizer.components.model_evaluation import ModelEvaluation
 
 
 class TrainingPipeline:
@@ -54,7 +54,7 @@ class TrainingPipeline:
                 data_transformation_config = self.config_manager.get_data_transformation_config()
                 data_transformation = DataTransformation(
                     config=data_transformation_config,
-                    artifact=data_ingestion_artifact,
+                    ingestion_artifact=data_ingestion_artifact,
                     backup_handler=s3_handler,
                 )
                 data_transformation_artifact = data_transformation.run_transformation()
@@ -66,19 +66,20 @@ class TrainingPipeline:
             # Step 5: Run model training
             model_trainer_config = self.config_manager.get_model_trainer_config()
             model_trainer = ModelTrainer(config=model_trainer_config,
-                                         artifact=data_transformation_artifact,
+                                         transformation_artifact=data_transformation_artifact,
                                          backup_handler=s3_handler)
-            model_trainer.train()
+            model_trainer_artifact = model_trainer.train()
 
-            # # Step 6: Run model evaluation
-            # model_evaluation_config = self.config_manager.get_model_evaluation_config()
-            # model_evaluation = ModelEvaluation(
-            #     evaluation_config=model_evaluation_config,
-            #     trainer_artifact=model_trainer_artifact,
-            #     transformation_artifact=data_transformation_artifact
-            # )
-            # model_evaluation_artifact = model_evaluation.run_evaluation()
-            # logger.info(f"Model Evaluation Artifact: {model_evaluation_artifact}")
+            # Step 6: Run model evaluation
+            model_evaluation_config = self.config_manager.get_model_evaluation_config()
+            model_evaluation = ModelEvaluation(
+                config=model_evaluation_config,
+                trainer_artifact=model_trainer_artifact,
+                transformation_artifact=data_transformation_artifact,
+                backup_handler=s3_handler,
+            )
+            model_evaluation_artifact = model_evaluation.run_evaluation()
+            logger.info(f"Model Evaluation Artifact: {model_evaluation_artifact}")
 
             logger.info("========== Training Pipeline Completed ==========")
 

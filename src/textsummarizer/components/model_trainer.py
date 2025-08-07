@@ -28,11 +28,11 @@ class ModelTrainer:
     def __init__(
         self,
         config: ModelTrainerConfig,
-        artifact: DataTransformationArtifact,
+        transformation_artifact: DataTransformationArtifact,
         backup_handler: Optional[DBHandler] = None,
     ) -> None:
         self.trainer_config = config
-        self.transformation_artifact = artifact
+        self.transformation_artifact = transformation_artifact
         self.backup_handler = backup_handler
 
     def _get_device(self) -> str:

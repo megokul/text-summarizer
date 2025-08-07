@@ -4,6 +4,7 @@ from transformers import AutoTokenizer
 from datasets import load_from_disk, DatasetDict
 from src.textsummarizer.entity.artifact_entity import DataTransformationArtifact, DataIngestionArtifact
 from src.textsummarizer.entity.config_entity import DataTransformationConfig
+from src.textsummarizer.dbhandler.base_handler import DBHandler
 from src.textsummarizer.logging import logger
 from src.textsummarizer.exception.exception import TextSummarizerError
 from typing import Optional
@@ -14,11 +15,11 @@ class DataTransformation:
     def __init__(
         self,
         config: DataTransformationConfig,
-        artifact: DataIngestionArtifact,
-        backup_handler: Optional[object] = None,
+        ingestion_artifact: DataIngestionArtifact,
+        backup_handler: Optional[DBHandler] = None,
     ):
         self.transformation_config = config
-        self.ingestion_artifact = artifact
+        self.ingestion_artifact = ingestion_artifact
         self.backup_handler = backup_handler
         self.tokenizer = AutoTokenizer.from_pretrained(self.transformation_config.tokenizer_name)
 

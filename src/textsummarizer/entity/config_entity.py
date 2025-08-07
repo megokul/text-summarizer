@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
-from box import ConfigBox
+from typing import List, Dict, Any
 
 @dataclass
 class DataIngestionConfig:
@@ -126,6 +126,9 @@ class DataTransformationConfig:
         return "\n".join(parts)
 
 
+from dataclasses import dataclass
+from pathlib import Path
+
 @dataclass
 class ModelTrainerConfig:
     root_dir: Path
@@ -181,9 +184,13 @@ class ModelTrainerConfig:
             "\nModel Trainer Config:",
             f"  - Root Dir:                     {self.root_dir}",
             f"  - Model Dir:                    {self.model_dir}",
+            f"  - Model S3 Key:                 {self.model_s3_key}",
             f"  - Tokenizer Dir:                {self.tokenizer_dir}",
+            f"  - Tokenizer S3 Key:             {self.tokenizer_s3_key}",
             f"  - Final Model Dir:              {self.final_model_dir}",
+            f"  - Final Model S3 Key:           {self.final_model_s3_key}",
             f"  - Final Tokenizer Dir:          {self.final_tokenizer_dir}",
+            f"  - Final Tokenizer S3 Key:       {self.final_tokenizer_s3_key}",
             f"  - Model Checkpoint:             {self.model_ckpt}",
             f"  - Number of Training Epochs:    {self.num_train_epochs}",
             f"  - Warmup Steps:                 {self.warmup_steps}",
@@ -201,7 +208,30 @@ class ModelTrainerConfig:
         ]
         return "\n".join(parts)
 
+
+
 @dataclass
 class ModelEvaluationConfig:
     root_dir: Path
-    report_path: Path
+    eval_report_filepath: Path
+    local_enabled: bool
+    s3_enabled: bool
+    eval_params: Dict[str, Any]
+
+    def __post_init__(self) -> None:
+        self.root_dir = Path(self.root_dir)
+        self.eval_report_filepath = Path(self.eval_report_filepath)
+
+    @property
+    def eval_report_s3_key(self) -> Path:
+        return self.eval_report_filepath.as_posix()
+
+    def __repr__(self) -> str:
+        return (
+            "\nModel Evaluation Config:"
+            f"\n  - Root Dir:               {self.root_dir}"
+            f"\n  - Eval Report Filepath:   {self.eval_report_filepath}"
+            f"\n  - Eval Report S3 Key:     {self.eval_report_s3_key}"
+            f"\n  - Local Save Enabled:     {self.local_enabled}"
+            f"\n  - S3 Upload Enabled:      {self.s3_enabled}"
+        )

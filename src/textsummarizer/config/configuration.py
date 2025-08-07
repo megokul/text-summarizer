@@ -19,12 +19,15 @@ from src.textsummarizer.constants.constants import (
     FINAL_MODEL_ROOT,
     FINAL_MODEL_SUBDIR,
     FINAL_TOKENIZER_SUBDIR,
+    EVALUATION_ROOT,
+    EVALUATION_REPORT_SUBDIR,
 )
 from src.textsummarizer.entity.config_entity import (
     DataIngestionConfig,
     DataTransformationConfig,
     ModelTrainerConfig,
     S3HandlerConfig,
+    ModelEvaluationConfig,
 )
 from src.textsummarizer.utils.core import read_yaml
 from src.textsummarizer.utils.timestamp import get_utc_timestamp
@@ -197,3 +200,22 @@ class ConfigurationManager:
         )
 
         return model_trainer_config
+
+    def get_model_evaluation_config(self) -> ModelEvaluationConfig:
+
+        evaluation_config = self.config.model_evaluation
+        eval_params = self.params.model_evaluation
+        root_dir = self.artifacts_root / EVALUATION_ROOT
+        eval_report_filepath = root_dir / EVALUATION_REPORT_SUBDIR / evaluation_config.report_filename
+
+        data_backup_config = self.config.data_backup
+
+        model_evaluation_config = ModelEvaluationConfig(
+            root_dir=root_dir,
+            eval_report_filepath=eval_report_filepath,
+            eval_params=eval_params,
+            local_enabled=data_backup_config.local_enabled,
+            s3_enabled=data_backup_config.s3_enabled,
+        )
+
+        return model_evaluation_config

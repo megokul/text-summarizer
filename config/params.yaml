@@ -37,9 +37,14 @@ tracking:
 # Model evaluation metrics
 model_evaluation:
   metrics:
-    - rouge1
-    - rouge2
-    - rougeL
-    - rougeLsum
-    - bleu
-    - meteor
+    - rouge
+  batch_size: 8
+  subset_size: 10
+  metric_options:
+    rouge:
+      use_stemmer: true
+    bleu:
+      max_order: 4
+    meteor:
+      alpha: 0.9
+

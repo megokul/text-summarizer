@@ -92,3 +92,16 @@ class ModelTrainerArtifact:
             f"  - Final Model S3 URI:                '{final_model_s3_str}'\n"
             f"  - Final Tokenizer S3 URI:            '{final_tokenizer_s3_str}'\n"
         )
+
+
+@dataclass(frozen=True)
+class ModelEvaluationArtifact:
+    eval_report_filepath: Path
+    eval_report_s3_uri: str
+
+    def __repr__(self) -> str:
+        return (
+            f"\nModel Evaluation Artifact:\n"
+            f"  - Report File: '{self.eval_report_filepath}'\n"
+            f"  - Report S3 URI: '{self.eval_report_s3_uri}'\n"
+        )
