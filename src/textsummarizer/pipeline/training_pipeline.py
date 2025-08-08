@@ -17,6 +17,8 @@ from src.textsummarizer.components.data_transformation import DataTransformation
 from src.textsummarizer.components.model_trainer import ModelTrainer
 from src.textsummarizer.components.model_evaluation import ModelEvaluation
 
+from dotenv import load_dotenv
+load_dotenv(override=True)
 
 class TrainingPipeline:
     """

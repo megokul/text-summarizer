@@ -1,6 +1,8 @@
 from pathlib import Path
 from typing import List
 
+import pandas as pd
+
 from src.textsummarizer.config.configuration import ConfigurationManager
 from src.textsummarizer.dbhandler.s3_handler import S3Handler
 from src.textsummarizer.components.model_prediction import ModelPrediction
@@ -8,6 +10,8 @@ from src.textsummarizer.exception.exception import TextSummarizerError
 from src.textsummarizer.logging import logger
 from src.textsummarizer.utils.core import read_csv
 
+from dotenv import load_dotenv
+load_dotenv(override=True)
 
 class PredictionPipeline:
     def __init__(self) -> None:
@@ -20,18 +24,19 @@ class PredictionPipeline:
 
     def run_pipeline(
         self,
-        input_texts: list[str] | None = None,
+        input_texts: str | list[str] | None = None,  # <-- accept str or list[str]
         input_file: Path | None = None,
     ) -> list[str]:
         """
         Run prediction end-to-end:
           1) Load config + optional S3 handler
           2) Initialize ModelPrediction
-          3) Resolve inputs (from list or file)
+          3) Resolve inputs (from string, list, or file)
           4) Predict summaries
           5) Save predictions via component (local/S3 per config)
+
         Returns:
-          List[str]: generated summaries in order.
+          list[str]: generated summaries in order.
         """
         try:
             logger.info("========== Prediction Pipeline Started ==========")
@@ -50,10 +55,22 @@ class PredictionPipeline:
             # 3) Prepare input data (STRICTLY config-driven; no defaults)
             if input_texts is not None:
                 logger.info("Using provided in-memory texts for prediction.")
-                texts: List[str] = list(input_texts)
+
+                # Normalize to list[str] without exploding a single str into characters
+                if isinstance(input_texts, str):
+                    texts: List[str] = [input_texts]
+                elif isinstance(input_texts, (list, tuple)):
+                    texts = [str(t) for t in input_texts]
+                else:
+                    raise TextSummarizerError(
+                        "input_texts must be a str or list[str].",
+                        logger,
+                    )
+
             elif input_file is not None:
                 logger.info("Loading input texts from file: %s", input_file)
-                df = read_csv(Path(input_file))
+                df: pd.DataFrame = read_csv(Path(input_file))
+
                 # Column name must be provided in params via PredictionConfig (no fallbacks)
                 input_col = prediction_config.input_text_column  # must exist in config
                 if input_col not in df.columns:
@@ -62,17 +79,28 @@ class PredictionPipeline:
                         logger,
                     )
                 texts = df[input_col].astype(str).tolist()
+
             else:
                 raise TextSummarizerError("No input data provided for prediction.", logger)
 
+            # Basic validation before calling model
+            texts = [t if t is not None else "" for t in texts]
+            empty_idx = [i for i, t in enumerate(texts) if not str(t).strip()]
+            if empty_idx:
+                # Fail early with actionable info
+                raise TextSummarizerError(
+                    f"Input contains {len(empty_idx)} empty text(s). Example indices: {empty_idx[:10]}",
+                    logger,
+                )
+
             # 4) Run prediction
-            summaries: List[str] = predictor.predict(texts)
+            summaries = predictor.predict(texts)
 
             # 5) Save predictions (component handles local/S3 per config)
             predictor.save_predictions(summaries)
 
             logger.info("========== Prediction Pipeline Completed ==========")
-            return summaries
+            return summaries.loc[0, "summary"]
 
         except Exception as e:
             raise TextSummarizerError(e, logger) from e

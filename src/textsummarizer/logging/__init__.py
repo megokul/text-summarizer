@@ -6,7 +6,8 @@ Provides a reusable `logger` instance configured with:
 - File + stream handlers
 - DEBUG level logging by default
 """
-
+from dotenv import load_dotenv
+load_dotenv(override=True)
 import logging
 from .app_logger import setup_logger
 

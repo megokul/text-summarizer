@@ -310,8 +310,8 @@ def to_python(obj):
     Recursively convert numpy/pandas scalars, arrays, and objects to plain Python
     types so they serialize cleanly to YAML/JSON.
     """
-    # pandas NA/NAType -> None
-    if pd.isna(obj) if isinstance(obj, (float, pd.api.extensions.ExtensionScalar, pd._libs.missing.NAType)) else False:
+    # Handle missing values (NA, NaN, NaT, None, etc.)
+    if pd.isna(obj):
         return None
 
     # numpy/pandas scalars

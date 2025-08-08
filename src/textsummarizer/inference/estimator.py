@@ -71,6 +71,7 @@ class TextSummarizerModel:
 
     def predict(self, text: str) -> str:
         try:
+            print(text)
             if not isinstance(text, str) or not text.strip():
                 raise TextSummarizerError("Input `text` must be a non-empty string.", logger)
 

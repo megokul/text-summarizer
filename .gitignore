@@ -17,6 +17,7 @@ __pycache__/
 artifacts/
 data/
 logs/
+predictions/
 
 # Other
 *.log
