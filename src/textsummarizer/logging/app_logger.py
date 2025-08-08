@@ -40,7 +40,7 @@ class LogHandler(logging.Handler):
             self.s3.put_object(
                 Bucket=self.bucket,
                 Key=self.key,
-                Body=self.buffer.getvalue()
+                Body=self.buffer.getvalue(),
             )
             # move buffer pointer to end for next write
             self.buffer.seek(0, 2)

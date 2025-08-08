@@ -1,40 +1,45 @@
-import torch
+import tempfile
+from pathlib import Path
+from typing import Optional, Any, Dict
+
+import evaluate
 import pandas as pd
+import torch
+from datasets import load_from_disk, DatasetDict
 from tqdm import tqdm
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
-from datasets import load_from_disk, DatasetDict
-import evaluate
-from pathlib import Path
-from src.textsummarizer.entity.config_entity import ModelEvaluationConfig
+
+from src.textsummarizer.dbhandler.base_handler import DBHandler
 from src.textsummarizer.entity.artifact_entity import (
     ModelTrainerArtifact,
     DataTransformationArtifact,
     ModelEvaluationArtifact,
 )
-from src.textsummarizer.dbhandler.base_handler import DBHandler
+from src.textsummarizer.entity.config_entity import ModelEvaluationConfig
 from src.textsummarizer.exception.exception import TextSummarizerError
 from src.textsummarizer.logging import logger
 from src.textsummarizer.utils.core import save_to_csv
-from typing import Optional, Any, Dict
+
 
 class ModelEvaluation:
     """
     Handles model evaluation using the configured metrics and saves the result.
     Returns a ModelEvaluationArtifact containing report paths.
     """
+
     def __init__(
         self,
         config: ModelEvaluationConfig,
         trainer_artifact: ModelTrainerArtifact,
-        transformation_artifact: DataTransformationArtifact = None,
-        backup_handler: Optional[DBHandler] = None,
+        transformation_artifact: DataTransformationArtifact | None = None,
+        backup_handler: DBHandler | None = None,
     ):
         self.eval_config = config
         self.trainer_artifact = trainer_artifact
         self.transformation_artifact = transformation_artifact
         self.backup_handler = backup_handler
 
-        # Grab all evaluation settings from config/params (batch size, subset size, metric options, etc)
+        # Pull dynamic params
         params = getattr(self.eval_config, "eval_params", {})
         self.metric_names = params.get("metrics", ["rouge1", "rouge2", "rougeL", "rougeLsum"])
         self.batch_size = params.get("batch_size", 8)
@@ -43,80 +48,66 @@ class ModelEvaluation:
         self.column_text = params.get("column_text", "dialogue")
         self.column_summary = params.get("column_summary", "summary")
 
-        # Generation params (defaults can be overridden by config)
-        self.max_input_length = params.get("max_input_length", None)
-        self.max_target_length = params.get("max_target_length", None)
+        # Generation params (prefer explicit eval params; fall back to transformation defaults)
+        self.max_input_length = params.get("max_input_length", 1024)
+        self.max_target_length = params.get("max_target_length", 128)
         self.length_penalty = params.get("length_penalty", 0.8)
         self.num_beams = params.get("num_beams", 8)
-        # Try to pick from data_transformation params if not present here
-        # (you can adjust this to fit your config loading pattern)
-        if self.max_input_length is None and hasattr(self.eval_config, "transformation_params"):
-            self.max_input_length = self.eval_config.transformation_params.get("max_input_length", 1024)
-        if self.max_target_length is None and hasattr(self.eval_config, "transformation_params"):
-            self.max_target_length = self.eval_config.transformation_params.get("max_target_length", 128)
-        if self.max_input_length is None:
-            self.max_input_length = 1024
-        if self.max_target_length is None:
-            self.max_target_length = 128
 
-    # ------------------- Loader Functions -------------------
+    # -------- Loader Functions (local + S3 via context) --------
     def _load_tokenizer(self):
         try:
             if self.eval_config.local_enabled and self.trainer_artifact.tokenizer_dir:
                 tokenizer_path = self.trainer_artifact.tokenizer_dir
-                logger.info(f"Loading tokenizer from local path: {tokenizer_path}")
+                logger.info("Loading tokenizer from local path: %s", tokenizer_path)
                 if not tokenizer_path.exists():
-                    raise TextSummarizerError(
-                        f"Tokenizer dir not found at: {tokenizer_path}", logger
-                    )
-                tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
-                logger.info("Loaded tokenizer from local disk.")
-                return tokenizer
+                    raise TextSummarizerError(f"Tokenizer dir not found at: {tokenizer_path}", logger)
+                return AutoTokenizer.from_pretrained(tokenizer_path)
 
-            if self.eval_config.s3_enabled and self.trainer_artifact.tokenizer_s3_uri:
+            if self.eval_config.s3_enabled and self.trainer_artifact.tokenizer_s3_uri and self.backup_handler:
                 tokenizer_s3_uri = self.trainer_artifact.tokenizer_s3_uri
-                logger.info(f"Loading tokenizer from S3 URI: {tokenizer_s3_uri}")
-                tokenizer = AutoTokenizer.from_pretrained(tokenizer_s3_uri)
-                logger.info("Loaded tokenizer from S3.")
-                return tokenizer
+                logger.info("Downloading tokenizer dir from S3: %s", tokenizer_s3_uri)
+                with self.backup_handler as handler, tempfile.TemporaryDirectory() as temp_dir:
+                    temp_dir_path = Path(temp_dir)
+                    handler.download_dir(tokenizer_s3_uri, temp_dir_path)
+                    tokenizer = AutoTokenizer.from_pretrained(str(temp_dir_path))
+                    logger.info("Loaded tokenizer from temp S3 dir.")
+                    return tokenizer
 
             raise TextSummarizerError("No valid tokenizer location found for loading.", logger)
-
         except Exception as e:
             logger.error("Failed to load tokenizer.")
             raise TextSummarizerError(e, logger) from e
 
-    def _load_model(self, device):
+    def _load_model(self, device: str):
         try:
             if self.eval_config.local_enabled and self.trainer_artifact.trained_model_dir:
                 model_path = Path(self.trainer_artifact.trained_model_dir)
-                logger.info(f"Loading model from local path: {model_path}")
+                logger.info("Loading model from local path: %s", model_path)
                 if not model_path.exists():
-                    raise TextSummarizerError(
-                        f"Model dir not found at: {model_path}", logger
-                    )
-                model = AutoModelForSeq2SeqLM.from_pretrained(model_path).to(device)
-                logger.info("Loaded model from local disk.")
-                return model
+                    raise TextSummarizerError(f"Model dir not found at: {model_path}", logger)
+                return AutoModelForSeq2SeqLM.from_pretrained(model_path).to(device)
 
-            if self.eval_config.s3_enabled and self.trainer_artifact.model_s3_uri:
+            if self.eval_config.s3_enabled and self.trainer_artifact.model_s3_uri and self.backup_handler:
                 model_s3_uri = self.trainer_artifact.model_s3_uri
-                logger.info(f"Loading model from S3 URI: {model_s3_uri}")
-                model = AutoModelForSeq2SeqLM.from_pretrained(model_s3_uri).to(device)
-                logger.info("Loaded model from S3.")
-                return model
+                logger.info("Downloading model dir from S3: %s", model_s3_uri)
+                with self.backup_handler as handler, tempfile.TemporaryDirectory() as temp_dir:
+                    temp_dir_path = Path(temp_dir)
+                    handler.download_dir(model_s3_uri, temp_dir_path)
+                    model = AutoModelForSeq2SeqLM.from_pretrained(str(temp_dir_path)).to(device)
+                    logger.info("Loaded model from temp S3 dir.")
+                    return model
 
             raise TextSummarizerError("No valid model location found for loading.", logger)
-
         except Exception as e:
             logger.error("Failed to load model.")
             raise TextSummarizerError(e, logger) from e
 
     def _load_dataset(self) -> DatasetDict:
         try:
-            if self.eval_config.local_enabled and self.transformation_artifact.tokenized_dataset_dir:
+            if self.eval_config.local_enabled and self.transformation_artifact and self.transformation_artifact.tokenized_dataset_dir:
                 dataset_path = Path(self.transformation_artifact.tokenized_dataset_dir)
-                logger.info(f"Loading DatasetDict from local path: {dataset_path}")
+                logger.info("Loading DatasetDict from local path: %s", dataset_path)
                 if not dataset_path.exists() or not (dataset_path / "dataset_dict.json").exists():
                     raise TextSummarizerError(
                         f"Expected DatasetDict structure not found at: {dataset_path}", logger
@@ -129,34 +120,35 @@ class ModelEvaluation:
                 logger.info("Loaded dataset from disk.")
                 return dataset
 
-            if self.eval_config.s3_enabled and self.transformation_artifact.tokenized_dataset_s3_uri:
+            if self.eval_config.s3_enabled and self.transformation_artifact and self.transformation_artifact.tokenized_dataset_s3_uri and self.backup_handler:
                 s3_uri = self.transformation_artifact.tokenized_dataset_s3_uri
-                logger.info(f"Loading DatasetDict from S3 URI: {s3_uri}")
-                dataset = load_from_disk(s3_uri)
-                if not isinstance(dataset, DatasetDict):
-                    raise TextSummarizerError(
-                        f"S3-loaded dataset is not a DatasetDict: {type(dataset)}", logger
-                    )
-                logger.info("Loaded dataset from S3.")
-                return dataset
+                logger.info("Downloading DatasetDict from S3: %s", s3_uri)
+                with self.backup_handler as handler, tempfile.TemporaryDirectory() as temp_dir:
+                    temp_dir_path = Path(temp_dir)
+                    handler.download_dir(s3_uri, temp_dir_path)
+                    dataset = load_from_disk(str(temp_dir_path))
+                    if not isinstance(dataset, DatasetDict):
+                        raise TextSummarizerError(
+                            f"S3-loaded dataset is not a DatasetDict: {type(dataset)}", logger
+                        )
+                    logger.info("Loaded dataset from temp S3 dir.")
+                    return dataset
 
             raise TextSummarizerError("No valid dataset location found for loading.", logger)
-
         except Exception as e:
             logger.error("Failed to load dataset")
             raise TextSummarizerError(e, logger) from e
 
     # ------------------- Metric Calculation -------------------
-    def _generate_batch_chunks(self, data, batch_size):
+    def _generate_batch_chunks(self, data, batch_size: int):
         for i in range(0, len(data), batch_size):
-            yield data[i : i + batch_size]
+            yield data[i: i + batch_size]
 
-    def _get_metric(self, name: str) -> Any:
+    def _get_metric(self, name: str) -> tuple[Any, Dict[str, Any]]:
         """Load evaluation metric and apply options from params.yaml if available."""
         options: Dict[str, Any] = self.metric_options.get(name, {})
-        logger.info(f"Loading metric: {name} with options: {options}")
+        logger.info("Loading metric: %s with options: %s", name, options)
         metric = evaluate.load(name)
-        # Some metrics (like rouge) allow options when computing
         return metric, options
 
     def _calculate_metrics(
@@ -166,17 +158,17 @@ class ModelEvaluation:
         metric_options,
         model,
         tokenizer,
-        batch_size=8,
-        device="cuda" if torch.cuda.is_available() else "cpu",
-        column_text="dialogue",
-        column_summary="summary",
+        batch_size: int = 8,
+        device: str = "cuda" if torch.cuda.is_available() else "cpu",
+        column_text: str = "dialogue",
+        column_summary: str = "summary",
     ):
         article_batches = list(self._generate_batch_chunks(dataset[column_text], batch_size))
         target_batches = list(self._generate_batch_chunks(dataset[column_summary], batch_size))
-        logger.info(f"Evaluating on {len(article_batches)} batches (batch_size={batch_size})")
+        logger.info("Evaluating on %d batches (batch_size=%d)", len(article_batches), batch_size)
 
         for article_batch, target_batch in tqdm(
-            zip(article_batches, target_batches), total=len(article_batches), desc="Evaluating batches",
+            zip(article_batches, target_batches), total=len(article_batches), desc="Evaluating batches"
         ):
             inputs = tokenizer(
                 article_batch,
@@ -201,29 +193,44 @@ class ModelEvaluation:
             metric.add_batch(predictions=decoded_summaries, references=target_batch)
 
         score = metric.compute(**metric_options)
-        logger.info(f"Evaluation metrics computed: {score}")
+        logger.info("Evaluation metrics computed: %s", score)
         return score
 
     # ------------------- Report Saving -------------------
-    def _save_report(self, df: pd.DataFrame) -> (Path | None, str | None):
+    def _save_report(self, df: pd.DataFrame) -> tuple[Path | None, str | None]:
         """
-        Save evaluation report locally and/or to S3, return tuple of (local_path, s3_uri).
+        Save evaluation report as YAML locally and/or to S3 (strictly via config).
         """
-        local_path = Path(self.eval_config.eval_report_filepath) if self.eval_config.local_enabled else None
-        s3_uri = None
+        # Flatten the single-row DF to a flat dict; multi-row -> dict of lists
+        if len(df) == 1:
+            report_dict = df.iloc[0].to_dict()
+        else:
+            report_dict = df.to_dict(orient="list")
 
-        # Save locally if enabled
-        if self.eval_config.local_enabled and local_path is not None:
-            save_to_csv(df, local_path, label="Model Evaluation Metrics")
-            logger.info(f"Saved evaluation metrics to {local_path}")
+        local_path: Path | None = None
+        s3_uri: str | None = None
 
-        # Save to S3 if enabled
-        if self.eval_config.s3_enabled and self.backup_handler is not None and local_path is not None:
+        # Local save (strict)
+        if self.eval_config.local_enabled:
+            local_path = Path(self.eval_config.eval_report_filepath)
+            from src.textsummarizer.utils.core import save_to_yaml
+            save_to_yaml(report_dict, local_path, label="Model Evaluation Metrics (YAML)")
+            logger.info("Saved evaluation metrics YAML to %s", local_path)
+
+        # S3 save (strict)
+        if self.eval_config.s3_enabled:
+            if self.backup_handler is None:
+                raise TextSummarizerError(
+                    "S3 saving enabled but backup_handler is None.", logger
+                )
+            s3_key = self.eval_config.eval_report_s3_key
+            if not s3_key:
+                raise TextSummarizerError(
+                    "S3 saving enabled but eval_report_s3_key is missing.", logger
+                )
             with self.backup_handler as handler:
-                # S3 key follows the report local path
-                s3_key = local_path.as_posix()
-                s3_uri = handler.upload_file(local_path, s3_key)
-                logger.info(f"Uploaded evaluation metrics to S3: {s3_uri}")
+                s3_uri = handler.stream_yaml(report_dict, s3_key)
+                logger.info("Uploaded evaluation metrics YAML to S3: %s", s3_uri)
 
         return local_path, s3_uri
 
@@ -236,26 +243,25 @@ class ModelEvaluation:
         """
         try:
             device = "cuda" if torch.cuda.is_available() else "cpu"
-            logger.info(f"Device used for evaluation: {device}")
+            logger.info("Device used for evaluation: %s", device)
 
             tokenizer = self._load_tokenizer()
             model = self._load_model(device=device)
             dataset = self._load_dataset()
             test_data = dataset["test"]
-            logger.info(f"Test split loaded with {len(test_data)} samples.")
+            logger.info("Test split loaded with %d samples.", len(test_data))
 
-            # Support evaluating only a subset (for fast tests)
+            # Optional subsetting for faster eval
             if self.subset_size is not None and self.subset_size > 0:
-                logger.info(f"Evaluating on subset: first {self.subset_size} samples.")
+                logger.info("Evaluating on subset: first %d samples.", self.subset_size)
                 test_data = test_data.select(range(self.subset_size))
             else:
                 logger.info("Evaluating on entire test set.")
 
-            # Evaluate and compute scores for all requested metrics
-            all_scores = {}
+            all_scores: Dict[str, Any] = {}
             for metric_name in self.metric_names:
                 metric, metric_options = self._get_metric(metric_name)
-                logger.info(f"Running evaluation for metric: {metric_name}")
+                logger.info("Running evaluation for metric: %s", metric_name)
                 score = self._calculate_metrics(
                     dataset=test_data,
                     metric=metric,
@@ -267,26 +273,22 @@ class ModelEvaluation:
                     column_text=self.column_text,
                     column_summary=self.column_summary,
                 )
-                # Some metrics (like ROUGE) return multiple keys, so flatten if necessary
                 if isinstance(score, dict):
                     for k, v in score.items():
                         all_scores[f"{metric_name}_{k}" if k != metric_name else k] = v
                 else:
                     all_scores[metric_name] = score
 
-            logger.info(f"Final evaluation scores: {all_scores}")
+            logger.info("Final evaluation scores: %s", all_scores)
 
-            # Save report and return artifact
             df = pd.DataFrame(all_scores, index=["pegasus"])
             local_report_path, s3_report_uri = self._save_report(df)
-            logger.info(f"Evaluation report saved: local={local_report_path}, s3={s3_report_uri}")
+            logger.info("Evaluation report saved: local=%s, s3=%s", local_report_path, s3_report_uri)
 
             return ModelEvaluationArtifact(
                 eval_report_filepath=local_report_path,
                 eval_report_s3_uri=s3_report_uri,
             )
-
         except Exception as e:
             logger.error("Model evaluation failed.")
             raise TextSummarizerError(e, logger) from e
-

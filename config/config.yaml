@@ -22,5 +22,5 @@ s3_handler:
   bucket_name: textsummarizer-dev-artifacts 
 
 data_backup:
-  s3_enabled: false
-  local_enabled: true
+  s3_enabled: true
+  local_enabled: false

@@ -17,6 +17,7 @@ from src.textsummarizer.entity.config_entity import S3HandlerConfig
 from src.textsummarizer.exception.exception import TextSummarizerError
 from src.textsummarizer.logging import logger
 
+
 class S3Handler(DBHandler):
     """
     AWS S3 Handler for file, directory, and DataFrame operations.
@@ -53,6 +54,8 @@ class S3Handler(DBHandler):
             logger.info("S3Handler resources released.")
         except Exception as e:
             logger.error("Error while closing S3Handler: %s", str(e))
+
+    # ---------------- Upload helpers ----------------
 
     def upload_file(self, local_path: Path, s3_key: str) -> str:
         try:
@@ -105,6 +108,71 @@ class S3Handler(DBHandler):
     def upload_dir(self, local_dir: Path, s3_prefix: str) -> str:
         self.sync_directory(local_dir, s3_prefix)
         return f"s3://{self.s3_config.bucket_name}/{s3_prefix}"
+
+    # ---------------- Download helpers (NEW) ----------------
+
+    def download_file(self, s3_path: str, local_path: Path) -> Path:
+        """
+        Download a single S3 object to local_path.
+        Accepts either a full s3://bucket/key or a key relative to the configured bucket.
+        """
+        try:
+            if s3_path.startswith("s3://"):
+                bucket, key = self._parse_s3_uri(s3_path)
+            else:
+                bucket, key = self.s3_config.bucket_name, s3_path
+
+            local_path = Path(local_path)
+            local_path.parent.mkdir(parents=True, exist_ok=True)
+            logger.info("Downloading S3 object %s/%s -> %s", bucket, key, local_path.as_posix())
+            self._client.download_file(bucket, key, str(local_path))
+            return local_path
+        except Exception as e:
+            logger.error("Failed to download file from S3")
+            raise TextSummarizerError(e, logger) from e
+
+    def download_dir(self, s3_path: str, local_dir: Path) -> None:
+        """
+        Download all objects under an S3 prefix to local_dir, preserving directory structure.
+
+        Args:
+            s3_path (str): Either a full s3://bucket/prefix or a prefix within the configured bucket.
+            local_dir (Path): Local destination directory.
+        """
+        try:
+            if s3_path.startswith("s3://"):
+                bucket, prefix = self._parse_s3_uri(s3_path)
+            else:
+                bucket, prefix = self.s3_config.bucket_name, s3_path
+
+            local_dir = Path(local_dir)
+            local_dir.mkdir(parents=True, exist_ok=True)
+
+            paginator = self._client.get_paginator("list_objects_v2")
+            logger.info("Listing objects for download: s3://%s/%s", bucket, prefix)
+
+            found_any = False
+            for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+                contents = page.get("Contents", [])
+                if not contents:
+                    continue
+                found_any = True
+                for obj in contents:
+                    key = obj["Key"]
+                    # Calculate relative path (strip the prefix from key)
+                    relative = Path(key[len(prefix):].lstrip("/"))
+                    target = local_dir / relative
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    logger.info("Downloading S3 object %s/%s -> %s", bucket, key, target.as_posix())
+                    self._client.download_file(bucket, key, str(target))
+
+            if not found_any:
+                logger.warning("No objects found at s3://%s/%s to download.", bucket, prefix)
+        except Exception as e:
+            logger.error("Failed to download directory from S3")
+            raise TextSummarizerError(e, logger) from e
+
+    # ---------------- DataFrame / object utilities ----------------
 
     def load_csv(self, s3_uri: str) -> pd.DataFrame:
         try:

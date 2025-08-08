@@ -99,26 +99,24 @@ def read_csv(filepath: Path) -> pd.DataFrame:
 @ensure_annotations
 def save_to_yaml(data: dict, *paths: Path, label: str):
     """
-    Write a dict out to YAML, always using UTF-8.
+    Write a dict out to YAML, always using UTF-8. Converts non-primitive
+    types first so YAML stays clean.
     """
     try:
-        # Iterate over all provided paths
+        data = to_python(data)
         for path in paths:
             path = Path(path)
-            # Create parent directory if it doesn't exist
             if not path.parent.exists():
                 path.parent.mkdir(parents=True, exist_ok=True)
                 logger.info(f"Created directory for {label}: '{path.parent.as_posix()}'")
             else:
                 logger.info(f"Directory already exists for {label}: '{path.parent.as_posix()}'")
 
-            # Write UTF-8 encoded YAML file
             with open(path, "w", encoding="utf-8") as file:
-                yaml.dump(data, file, sort_keys=False)
+                yaml.safe_dump(data, file, sort_keys=False, allow_unicode=True)
 
             logger.info(f"{label} saved to: '{path.as_posix()}'")
     except Exception as e:
-        # Log and raise error on failure
         logger.info(f"Failed to save YAML to: '{path.as_posix()}'")
         raise TextSummarizerError(e, logger) from e
 
@@ -306,3 +304,38 @@ def download_file(url: str, download_path: Path, retries: int = 3, delay: float 
             else:
                 logger.error("Error during dataset download after retries.")
                 raise TextSummarizerError(e, logger) from e
+
+def to_python(obj):
+    """
+    Recursively convert numpy/pandas scalars, arrays, and objects to plain Python
+    types so they serialize cleanly to YAML/JSON.
+    """
+    # pandas NA/NAType -> None
+    if pd.isna(obj) if isinstance(obj, (float, pd.api.extensions.ExtensionScalar, pd._libs.missing.NAType)) else False:
+        return None
+
+    # numpy/pandas scalars
+    if isinstance(obj, (np.generic,)):
+        return obj.item()
+    if isinstance(obj, (pd.Timestamp,)):
+        return obj.isoformat()
+    if isinstance(obj, (pd.Timedelta,)):
+        return obj.isoformat()
+
+    # containers
+    if isinstance(obj, dict):
+        return {k: to_python(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, set)):
+        seq = [to_python(v) for v in obj]
+        return type(obj)(seq) if not isinstance(obj, set) else list(seq)
+
+    # numpy arrays / pandas Series / DataFrame
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, pd.Series):
+        return obj.apply(to_python).tolist()
+    if isinstance(obj, pd.DataFrame):
+        # Default to list-of-dicts (records) if someone passes a DF
+        return obj.applymap(to_python).to_dict(orient="records")
+
+    return obj

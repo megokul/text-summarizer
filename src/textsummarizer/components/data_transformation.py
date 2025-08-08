@@ -1,5 +1,6 @@
 import os
 import shutil
+import tempfile
 from transformers import AutoTokenizer
 from datasets import load_from_disk, DatasetDict
 from src.textsummarizer.entity.artifact_entity import DataTransformationArtifact, DataIngestionArtifact
@@ -152,48 +153,83 @@ class DataTransformation:
             logger.error(f"Error during input/attention mask length check: {e}")
             raise
 
-    def _save_all(self, tokenized_dataset: DatasetDict):
+    def _save_all(
+        self, tokenized_dataset: DatasetDict
+    ) -> tuple[Path | None, Path | None, str | None, str | None]:
         """
-        Handles saving locally (and to DVC) and/or to S3, based on config flags.
-        Returns all paths/URIs.
+        Save tokenized dataset locally (and DVC copy) and/or upload to S3 using
+        S3Handler.upload_dir.
+
+        Returns:
+            tuple: (local_dir, dvc_local_dir, tokenized_s3_uri, dvc_tokenized_s3_uri)
         """
-        dataset_dir = None
-        dvc_dataset_dir = None
-        tokenized_dataset_s3_key = None
-        dvc_tokenized_dataset_s3_key = None
+        dataset_dir: Path | None = None
+        dvc_dataset_dir: Path | None = None
+        tokenized_dataset_s3_uri: str | None = None
+        dvc_tokenized_dataset_s3_uri: str | None = None
 
         try:
-            # Save locally and to DVC
+            # ---- Local and DVC saves ----
             if self.transformation_config.local_enabled:
                 dataset_dir = self.transformation_config.tokenized_dataset_dir
-                os.makedirs(dataset_dir, exist_ok=True)
+                dataset_dir.mkdir(parents=True, exist_ok=True)
                 tokenized_dataset.save_to_disk(dataset_dir.as_posix())
-                logger.info(f"Saved tokenized dataset locally: {dataset_dir}")
+                logger.info("Saved tokenized dataset locally: %s", dataset_dir)
 
                 dvc_dataset_dir = self.transformation_config.dvc_tokenized_dataset_dir
                 if dvc_dataset_dir.exists():
                     shutil.rmtree(dvc_dataset_dir)
                 shutil.copytree(dataset_dir, dvc_dataset_dir)
-                logger.info(f"DVC dataset copy created: {dvc_dataset_dir}")
+                logger.info("DVC dataset copy created: %s", dvc_dataset_dir)
 
-            # Upload to S3
+            # ---- S3 uploads via upload_dir ----
             if self.transformation_config.s3_enabled and self.backup_handler:
-                tokenized_dataset_s3_key = self.transformation_config.tokenized_dataset_s3_key
-                dvc_tokenized_dataset_s3_key = self.transformation_config.dvc_tokenized_dataset_s3_key
-                with self.backup_handler as handler:
-                    if tokenized_dataset_s3_key:
-                        tokenized_dataset.save_to_disk(tokenized_dataset_s3_key)
-                        logger.info(f"Saved tokenized dataset directly to S3: {tokenized_dataset_s3_key}")
+                tokenized_key = self.transformation_config.tokenized_dataset_s3_key
+                dvc_tokenized_key = self.transformation_config.dvc_tokenized_dataset_s3_key
 
-                    if dvc_tokenized_dataset_s3_key:
-                        tokenized_dataset.save_to_disk(dvc_tokenized_dataset_s3_key)
-                        logger.info(f"Uploaded DVC tokenized dataset to S3: {dvc_tokenized_dataset_s3_key}")
+                with self.backup_handler as handler, tempfile.TemporaryDirectory() as tmpdir:
+                    tmp_path = Path(tmpdir)
+                    tokenized_dataset.save_to_disk(tmp_path.as_posix())
 
-            return dataset_dir, dvc_dataset_dir, tokenized_dataset_s3_key, dvc_tokenized_dataset_s3_key
+                    if tokenized_key:
+                        s3_prefix = (
+                            self._s3_uri_to_key(tokenized_key)
+                            if tokenized_key.startswith("s3://")
+                            else tokenized_key
+                        )
+                        tokenized_dataset_s3_uri = handler.upload_dir(
+                            tmp_path, s3_prefix
+                        )
+                        logger.info(
+                            "Uploaded tokenized dataset folder to S3: %s",
+                            tokenized_dataset_s3_uri
+                        )
+
+                    if dvc_tokenized_key:
+                        dvc_prefix = (
+                            self._s3_uri_to_key(dvc_tokenized_key)
+                            if dvc_tokenized_key.startswith("s3://")
+                            else dvc_tokenized_key
+                        )
+                        dvc_tokenized_dataset_s3_uri = handler.upload_dir(
+                            tmp_path, dvc_prefix
+                        )
+                        logger.info(
+                            "Uploaded DVC tokenized dataset folder to S3: %s",
+                            dvc_tokenized_dataset_s3_uri
+                        )
+
+            return (
+                dataset_dir,
+                dvc_dataset_dir,
+                tokenized_dataset_s3_uri,
+                dvc_tokenized_dataset_s3_uri,
+            )
 
         except Exception as e:
-            logger.info("Error during saving outputs (local/DVC/S3)")
+            logger.info("Failed during dataset save/upload.")
             raise TextSummarizerError(e, logger) from e
+
 
     def print_column_dtypes(self, tokenized_dataset: DatasetDict, fields=('input_ids', 'labels', 'attention_mask')):
         """
