@@ -235,3 +235,58 @@ class ModelEvaluationConfig:
             f"\n  - Local Save Enabled:     {self.local_enabled}"
             f"\n  - S3 Upload Enabled:      {self.s3_enabled}"
         )
+
+
+@dataclass
+class PredictionConfig:
+    root_dir: Path
+    model_dir: Path | None
+    tokenizer_dir: Path | None
+    local_enabled: bool
+    s3_enabled: bool
+    max_input_length: int
+    max_target_length: int
+    num_beams: int
+    length_penalty: float
+    no_repeat_ngram_size: int
+    device: str
+    batch_size: int
+    early_stopping: bool
+
+    def __post_init__(self) -> None:
+        self.root_dir = Path(self.root_dir)
+        self.model_dir = Path(self.model_dir) if self.model_dir is not None else None
+        self.tokenizer_dir = Path(self.tokenizer_dir) if self.tokenizer_dir is not None else None
+
+    @property
+    def root_s3_key(self) -> str:
+        return self.root_dir.as_posix()
+
+    @property
+    def model_s3_key(self) -> str | None:
+        return self.model_dir.as_posix() if self.model_dir is not None else None
+
+    @property
+    def tokenizer_s3_key(self) -> str | None:
+        return self.tokenizer_dir.as_posix() if self.tokenizer_dir is not None else None
+
+    def __repr__(self) -> str:
+        return (
+            "\nPrediction Config:"
+            f"\n  - Root Dir:               {self.root_dir}"
+            f"\n  - Root S3 Key:            {self.root_s3_key}"
+            f"\n  - Model Dir:              {self.model_dir}"
+            f"\n  - Tokenizer Dir:          {self.tokenizer_dir}"
+            f"\n  - Model S3 Key:           {self.model_s3_key}"
+            f"\n  - Tokenizer S3 Key:       {self.tokenizer_s3_key}"
+            f"\n  - Local Save Enabled:     {self.local_enabled}"
+            f"\n  - S3 Upload Enabled:      {self.s3_enabled}"
+            f"\n  - Max Input Length:       {self.max_input_length}"
+            f"\n  - Max Target Length:      {self.max_target_length}"
+            f"\n  - Num Beams:              {self.num_beams}"
+            f"\n  - Length Penalty:         {self.length_penalty}"
+            f"\n  - No Repeat Ngram Size:   {self.no_repeat_ngram_size}"
+            f"\n  - Device:                 {self.device}"
+            f"\n  - Batch Size:             {self.batch_size}"
+            f"\n  - Early Stopping:         {self.early_stopping}"
+        )

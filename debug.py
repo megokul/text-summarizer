@@ -1,10 +1,11 @@
-from src.textsummarizer.pipeline.training_pipeline import TrainingPipeline
-from src.textsummarizer.exception.exception import TextSummarizerError
+from src.textsummarizer.pipeline.prediction_pipeline import PredictionPipeline
 
-try:
-    pipeline = TrainingPipeline()
-    pipeline.run_pipeline()
-except TextSummarizerError as e:
-    print(f"An error occurred: {e}")
-except Exception as e:
-    print(f"An unexpected error occurred: {e}")
+pipe = PredictionPipeline()
+
+texts = [
+    "Amanda: I baked cookies. Do you want some?\nJerry: Sure!\nAmanda: I'll bring you tomorrow :-)",
+    "Alice: Can you attend the 3pm sync?\nBob: Yes, but I’ll be 5 minutes late.",
+]
+
+summaries = pipe.run_pipeline(input_texts=texts)
+print(summaries)

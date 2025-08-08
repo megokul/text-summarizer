@@ -21,6 +21,7 @@ from src.textsummarizer.constants.constants import (
     FINAL_TOKENIZER_SUBDIR,
     EVALUATION_ROOT,
     EVALUATION_REPORT_SUBDIR,
+    PREDICTION_ROOT,
 )
 from src.textsummarizer.entity.config_entity import (
     DataIngestionConfig,
@@ -28,6 +29,7 @@ from src.textsummarizer.entity.config_entity import (
     ModelTrainerConfig,
     S3HandlerConfig,
     ModelEvaluationConfig,
+    PredictionConfig,
 )
 from src.textsummarizer.utils.core import read_yaml
 from src.textsummarizer.utils.timestamp import get_utc_timestamp
@@ -219,3 +221,42 @@ class ConfigurationManager:
         )
 
         return model_evaluation_config
+
+    def get_prediction_config(self) -> PredictionConfig:
+
+        root_dir = Path(PREDICTION_ROOT)
+        model_dir = Path(FINAL_MODEL_ROOT) / FINAL_MODEL_SUBDIR
+        tokenizer_dir = Path(FINAL_MODEL_ROOT) / FINAL_TOKENIZER_SUBDIR
+        data_backup_config = self.config.data_backup
+
+        transform_params = self.params.data_transformation
+        prediction_params = self.params.prediction
+
+        # Generation params
+        max_input_length = transform_params.tokenizer.max_input_length
+        max_target_length = transform_params.tokenizer.max_target_length
+
+        num_beams = prediction_params.num_beams
+        length_penalty = prediction_params.length_penalty
+        no_repeat_ngram_size = prediction_params.no_repeat_ngram_size
+        batch_size = prediction_params.batch_size
+        early_stopping = prediction_params.early_stopping
+        device = prediction_params.device
+
+        prediction_config = PredictionConfig(
+            root_dir=root_dir,
+            model_dir=model_dir,
+            tokenizer_dir=tokenizer_dir,
+            local_enabled=data_backup_config.local_enabled,
+            s3_enabled=data_backup_config.s3_enabled,
+            max_input_length=max_input_length,
+            max_target_length=max_target_length,
+            num_beams=num_beams,
+            length_penalty=length_penalty,
+            no_repeat_ngram_size=no_repeat_ngram_size,
+            batch_size=batch_size,
+            early_stopping=early_stopping,
+            device=device,
+        )
+
+        return prediction_config
