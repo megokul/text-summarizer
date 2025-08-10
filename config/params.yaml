@@ -47,6 +47,8 @@ model_evaluation:
       max_order: 4
     meteor:
       alpha: 0.9
+  column_text: dialogue
+  column_summary: summary
 
 prediction:
   num_beams: 4
