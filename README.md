@@ -231,5 +231,5 @@ This project is licensed under the **MIT License**.
 
 ## 📧 Contact
 
-**Your Name** — [your.email@example.com](mailto:your.email@example.com)
-GitHub: [https://github.com/your-username](https://github.com/your-username)
+**Your Name** — [your.email@example.com](mailto:iamgokul93@example.com)
+GitHub: [https://github.com/your-username](https://github.com/megokul)
