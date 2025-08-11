@@ -231,5 +231,5 @@ This project is licensed under the **MIT License**.
 
 ## 📧 Contact
 
-**Your Name** — [iamgokul93@example.com](mailto:iamgokul93@example.com)
+**Gokul Krishna** — [iamgokul93@example.com](mailto:iamgokul93@example.com)
 GitHub: [https://github.com/megokul](https://github.com/megokul)
