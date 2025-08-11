@@ -113,7 +113,7 @@ The design follows **god-tier, production-grade principles**:
 ### 1️⃣ Clone the Repository
 
 ```bash
-git clone https://github.com/your-username/text-summarizer.git
+git clone https://github.com/megokul/text-summarizer.git
 cd text-summarizer
 ```
 
